@@ -26,10 +26,10 @@ channels = set()
 async def send_survey(chat_id: int):
     """Send the survey polls to the specified chat"""
     try:
-        # First poll: "Идешь ли ты в бар?"
+        # First poll: "Идем в бар на этой неделе?"
         await bot.send_poll(
             chat_id=chat_id,
-            question="Идешь ли ты в бар?",
+            question="Идем в бар на этой неделе?",
             options=["🟩 Да", "🟥 Нет", "🤷‍♂️ Напишу позже"],
             is_anonymous=False,
             allows_multiple_answers=False,
