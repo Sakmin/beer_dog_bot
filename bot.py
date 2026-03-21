@@ -30,7 +30,7 @@ async def send_survey(chat_id: int):
         await bot.send_poll(
             chat_id=chat_id,
             question="Идешь ли ты в бар?",
-            options=["Да", "Нет", "Напишу позже"],
+            options=["🟩 Да", "🟥 Нет", "🤷‍♂️ Напишу позже"],
             is_anonymous=False,
             allows_multiple_answers=False,
         )
@@ -39,7 +39,7 @@ async def send_survey(chat_id: int):
         await bot.send_poll(
             chat_id=chat_id,
             question="Когда тебе удобно?",
-            options=["Четверг", "Пятница"],
+            options=["🟢 Четверг", "🔵 Пятница"],
             is_anonymous=False,
             allows_multiple_answers=False,
         )
