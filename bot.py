@@ -22,12 +22,24 @@ MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 # Store channel IDs for weekly surveys
 channels = set()
 
+# Store poll voters: {chat_id: {user_id: set(poll_ids)}}
+poll_voters = {}
+
+# Store current poll message IDs: {chat_id: [poll1_id, poll2_id]}
+active_polls = {}
+
+# Store users who have started the bot (for DM reminders)
+bot_users = set()
+
 
 async def send_survey(chat_id: int):
     """Send the survey polls to the specified chat"""
     try:
+        # Reset voters for this chat
+        poll_voters[chat_id] = {}
+        
         # First poll: "Идем в бар на этой неделе?"
-        await bot.send_poll(
+        poll1 = await bot.send_poll(
             chat_id=chat_id,
             question="Идем в бар на этой неделе?",
             options=["🟩 Да", "🟥 Нет", "🤷‍♂️ Напишу позже"],
@@ -36,16 +48,154 @@ async def send_survey(chat_id: int):
         )
         
         # Second poll: "Когда тебе удобно?"
-        await bot.send_poll(
+        poll2 = await bot.send_poll(
             chat_id=chat_id,
             question="Когда тебе удобно?",
             options=["🟢 Четверг", "🔵 Пятница"],
             is_anonymous=False,
             allows_multiple_answers=False,
         )
+        
+        # Store poll IDs
+        active_polls[chat_id] = [poll1.message_id, poll2.message_id]
+        
     except Exception as e:
         print(f"Error sending survey to chat {chat_id}: {e}")
         channels.discard(chat_id)
+
+
+@dp.poll_answer()
+async def track_poll_answer(poll_answer: types.PollAnswer):
+    """Track who voted in polls"""
+    chat_id = poll_answer.voter_chat.id
+    user_id = poll_answer.voter_user.id
+    
+    if chat_id not in poll_voters:
+        poll_voters[chat_id] = {}
+    
+    if user_id not in poll_voters[chat_id]:
+        poll_voters[chat_id][user_id] = set()
+    
+    poll_voters[chat_id][user_id].add(poll_answer.poll_id)
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    """Handler for /start command"""
+    bot_users.add(message.from_user.id)
+    await message.answer(
+        "Привет! Я бот-опросник.\n"
+        "Добавьте меня в канал, и я буду проводить опросы каждую среду в 13:00.\n"
+        "Используйте /poll для ручного запуска опроса."
+    )
+
+
+@dp.message(Command("poll"))
+async def cmd_poll(message: types.Message):
+    """Handler for /poll command - manual survey trigger"""
+    channels.add(message.chat.id)
+    await send_survey(message.chat.id)
+
+
+@dp.message(Command("register"))
+async def cmd_register(message: types.Message):
+    """Manually register this chat for weekly surveys"""
+    channels.add(message.chat.id)
+    await message.answer("Канал зарегистрирован для еженедельных опросов!")
+
+
+@dp.my_chat_member()
+async def bot_chat_member_update(update: types.Update):
+    """Track when bot is added/removed from channels"""
+    new_status = update.my_chat_member.new_chat_member.status
+    
+    chat_id = update.my_chat_member.chat.id
+    chat_type = update.my_chat_member.chat.type
+    
+    if chat_type in ["channel", "group", "supergroup"]:
+        if new_status in ["member", "administrator"]:
+            channels.add(chat_id)
+            await bot.send_message(
+                chat_id=chat_id,
+                text="Спасибо, что добавили меня! Опросы будут приходить каждую среду в 13:00 по Москве.\nИспользуйте /poll для запуска опроса прямо сейчас."
+            )
+        elif new_status in ["left", "kicked"]:
+            channels.discard(chat_id)
+
+
+async def check_voters_and_remind():
+    """Check who hasn't voted and send reminders at 19:00 MSK"""
+    while True:
+        now = datetime.now(MOSCOW_TZ)
+        
+        # Schedule for 19:00 MSK today
+        reminder_time = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        
+        if now >= reminder_time:
+            # Already past 19:00, schedule for tomorrow
+            reminder_time += timedelta(days=1)
+        
+        # Only send reminders on Wednesday
+        if reminder_time.weekday() != 2:  # 2 = Wednesday
+            days_until_wednesday = (2 - now.weekday()) % 7
+            if days_until_wednesday == 0:
+                days_until_wednesday = 7
+            reminder_time = now.replace(
+                hour=19, minute=0, second=0, microsecond=0
+            ) + timedelta(days=days_until_wednesday)
+        
+        sleep_time = (reminder_time - now).total_seconds()
+        print(f"Next voter check at {reminder_time.strftime('%Y-%m-%d %H:%M:%S')} MSK")
+        await asyncio.sleep(sleep_time)
+        
+        # Check voters for each channel
+        for chat_id in channels:
+            if chat_id not in poll_voters:
+                continue
+            
+            voters = poll_voters.get(chat_id, {})
+            voted_user_ids = set(voters.keys())
+            
+            # Get channel members (for groups/channels)
+            try:
+                members = []
+                offset = 0
+                while True:
+                    chunk = await bot.get_chat_members(
+                        chat_id=chat_id,
+                        offset=offset,
+                        limit=100
+                    )
+                    if not chunk:
+                        break
+                    members.extend(chunk)
+                    offset += 100
+                    if len(chunk) < 100:
+                        break
+            except Exception as e:
+                print(f"Can't get members for chat {chat_id}: {e}")
+                continue
+            
+            # Check each member
+            for member in members:
+                user_id = member.user.id
+                
+                # Skip bots
+                if member.user.is_bot:
+                    continue
+                
+                # Check if user hasn't voted
+                if user_id not in voted_user_ids:
+                    # Try to send reminder
+                    if user_id in bot_users:
+                        try:
+                            await bot.send_message(
+                                chat_id=user_id,
+                                text="Привет! Я всего лишь бот, но даже я вижу, что ты ещё не ответил на опрос по бару."
+                            )
+                            print(f"Reminder sent to user {user_id}")
+                        except Exception as e:
+                            print(f"Can't send reminder to user {user_id}: {e}")
 
 
 async def test_scheduler():
@@ -91,49 +241,6 @@ async def weekly_scheduler():
         await asyncio.sleep(7 * 24 * 60 * 60)
 
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Handler for /start command"""
-    await message.answer(
-        "Привет! Я бот-опросник.\n"
-        "Добавьте меня в канал, и я буду проводить опросы каждую среду в 13:00.\n"
-        "Используйте /poll для ручного запуска опроса."
-    )
-
-
-@dp.message(Command("poll"))
-async def cmd_poll(message: types.Message):
-    """Handler for /poll command - manual survey trigger"""
-    channels.add(message.chat.id)
-    await send_survey(message.chat.id)
-
-
-@dp.message(Command("register"))
-async def cmd_register(message: types.Message):
-    """Manually register this chat for weekly surveys"""
-    channels.add(message.chat.id)
-    await message.answer("Канал зарегистрирован для еженедельных опросов!")
-
-
-@dp.my_chat_member()
-async def bot_chat_member_update(update: types.Update):
-    """Track when bot is added/removed from channels"""
-    new_status = update.my_chat_member.new_chat_member.status
-    
-    chat_id = update.my_chat_member.chat.id
-    chat_type = update.my_chat_member.chat.type
-    
-    if chat_type in ["channel", "group", "supergroup"]:
-        if new_status in ["member", "administrator"]:
-            channels.add(chat_id)
-            await bot.send_message(
-                chat_id=chat_id,
-                text="Спасибо, что добавили меня! Опросы будут приходить каждую среду в 13:00 по Москве.\nИспользуйте /poll для запуска опроса прямо сейчас."
-            )
-        elif new_status in ["left", "kicked"]:
-            channels.discard(chat_id)
-
-
 # Main function
 async def main():
     # Set bot commands
@@ -142,21 +249,26 @@ async def main():
         BotCommand(command="poll", description="Запустить опрос вручную"),
     ])
     
-    # Start the test scheduler (17:02 MSK today)
+    # Start the test scheduler
     test_task = asyncio.create_task(test_scheduler())
     
     # Start the weekly scheduler
     weekly_task = asyncio.create_task(weekly_scheduler())
     
+    # Start the reminder checker
+    reminder_task = asyncio.create_task(check_voters_and_remind())
+    
     print("Bot is running...")
     print("Test survey scheduled for 17:02 MSK today")
     print("Weekly surveys will be sent every Wednesday at 13:00 Moscow time")
+    print("Voter reminders will be sent every Wednesday at 19:00 Moscow time")
     
     try:
         await dp.start_polling(bot)
     finally:
         test_task.cancel()
         weekly_task.cancel()
+        reminder_task.cancel()
 
 
 if __name__ == "__main__":
