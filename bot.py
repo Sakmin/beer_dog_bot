@@ -83,16 +83,28 @@ async def track_poll_answer(poll_answer: types.PollAnswer):
 async def cmd_start(message: types.Message):
     """Handler for /start command"""
     bot_users.add(message.from_user.id)
-    await message.answer(
-        "Привет! Я бот-опросник.\n"
-        "Добавьте меня в канал, и я буду проводить опросы каждую среду в 13:00.\n"
-        "Используйте /poll для ручного запуска опроса."
-    )
+    
+    # Only respond in private messages
+    if message.chat.type == "private":
+        await message.answer(
+            "Привет! Я бот-опросник.\n\n"
+            "Я провожу опросы в каналах и группах.\n"
+            "Добавь меня в канал, и я буду проводить опросы каждую среду в 13:00.\n\n"
+            "Если ты уже в канале с ботом — просто дождись опроса или используй /poll в канале."
+        )
 
 
 @dp.message(Command("poll"))
 async def cmd_poll(message: types.Message):
     """Handler for /poll command - manual survey trigger"""
+    # Only work in channels/groups, not in private messages
+    if message.chat.type == "private":
+        await message.answer(
+            "Опросы проводятся только в каналах и группах.\n"
+            "Используй эту команду в канале, где нужно провести опрос."
+        )
+        return
+    
     channels.add(message.chat.id)
     await send_survey(message.chat.id)
 
@@ -100,6 +112,14 @@ async def cmd_poll(message: types.Message):
 @dp.message(Command("register"))
 async def cmd_register(message: types.Message):
     """Manually register this chat for weekly surveys"""
+    # Only work in channels/groups, not in private messages
+    if message.chat.type == "private":
+        await message.answer(
+            "Регистрация работает только в каналах и группах.\n"
+            "Используй эту команду в канале."
+        )
+        return
+    
     channels.add(message.chat.id)
     await message.answer("Канал зарегистрирован для еженедельных опросов!")
 
