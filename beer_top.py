@@ -672,11 +672,11 @@ class BeerTopService:
         self._cache_text: str | None = None
         self._cache_until: datetime | None = None
         self._cache_entries: list[BeerEntry] | None = None
-        self._openai_api_key = os.getenv("OPENAI_API_KEY")
-        self._openai_model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        self._xai_api_key = os.getenv("XAI_API_KEY")
+        self._xai_model = os.getenv("XAI_MODEL", "grok-4-0709")
         self._openai_client = (
-            OpenAI(api_key=self._openai_api_key)
-            if OpenAI is not None and self._openai_api_key
+            OpenAI(api_key=self._xai_api_key, base_url="https://api.x.ai/v1")
+            if OpenAI is not None and self._xai_api_key
             else None
         )
 
@@ -767,7 +767,7 @@ class BeerTopService:
             return None
 
         response = self._openai_client.responses.parse(
-            model=self._openai_model,
+            model=self._xai_model,
             input=[
                 {
                     "role": "system",
