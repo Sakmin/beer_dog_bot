@@ -39,7 +39,15 @@ def test_format_beer_message_groups_only_non_empty_categories():
     message = format_beer_message(
         {
             "New England IPA": [
-                BeerEntry("Alpha", "Brewery (г. Москва)", "IPA - New England / Hazy", 4.12, 1234, "5/3/12,5")
+                BeerEntry(
+                    "Alpha",
+                    "Brewery (г. Москва)",
+                    "IPA - New England / Hazy",
+                    4.12,
+                    1234,
+                    "5/3/12,5",
+                    "Chinook, Citra, mango",
+                )
             ],
             "IPA": [BeerEntry("Beta", "Brewery Two", "IPA - American", 4.01, 200, "6/40/16")],
             "Sour Ale": [],
@@ -57,7 +65,7 @@ def test_format_beer_message_groups_only_non_empty_categories():
                 "Смотри какое интересное пиво я нашел:",
                 "",
                 "<b><u>New England IPA</u></b>",
-                "• <b>Alpha</b> - Brewery",
+                "• <b>Alpha</b> (Chinook, Citra, mango) - Brewery",
                 "ALC: 5/3/12,5",
                 "Untappd 4.12 | 1,234 ratings",
                 "",
