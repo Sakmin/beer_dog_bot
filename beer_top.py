@@ -4,13 +4,15 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
+import gzip
+import hashlib
 import json
 import logging
 import math
 import re
 from html import unescape
 from html.parser import HTMLParser
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote, quote_plus, urlencode, urljoin
 from urllib.request import Request, urlopen
 
 
@@ -25,6 +27,14 @@ CATEGORY_ORDER = (
 LOGGER = logging.getLogger(__name__)
 CHANNEL_URL = "https://t.me/s/beerhounds73"
 UNTAPPD_SEARCH_URL = "https://untappd.com/search?q={query}"
+GLIDE_PUBLISHED_DATA_URL = (
+    "https://firestore.googleapis.com/v1/projects/glide-prod/"
+    "databases/(default)/documents/glide-apps-v4-data/{app_id}"
+)
+GLIDE_TABLE_ROWS_URL = (
+    "https://firestore.googleapis.com/v1/projects/glide-prod/"
+    "databases/(default)/documents/glide-apps-v4-data/{app_id}/tables/{table_doc_id}/rows"
+)
 
 
 @dataclass(slots=True)
@@ -40,6 +50,9 @@ class BeerEntry:
 class GlideListing:
     name: str
     brewery: str | None = None
+    style: str | None = None
+    untappd_url: str | None = None
+    rating_hint: float | None = None
 
 
 @dataclass(slots=True)
@@ -272,6 +285,13 @@ def extract_latest_glide_url(html: str) -> str | None:
     return parser.result
 
 
+def extract_glide_app_id(glide_url: str) -> str | None:
+    match = re.search(r"/play/([A-Za-z0-9]+)", glide_url)
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def parse_glide_listings(html: str) -> list[GlideListing]:
     for raw_json in _JSON_SCRIPT_RE.findall(html):
         try:
@@ -298,6 +318,91 @@ def parse_untappd_search_results(html: str) -> list[UntappdSearchResult]:
     parser = _UntappdSearchResultParser()
     parser.feed(html)
     return parser.results
+
+
+def extract_inventory_table_doc_id(document_json: str) -> str | None:
+    payload = json.loads(document_json)
+    schema_value = (
+        payload.get("fields", {})
+        .get("schema", {})
+        .get("stringValue")
+    )
+    if not isinstance(schema_value, str):
+        return None
+
+    schema = _decode_published_schema(schema_value)
+    if not isinstance(schema, dict):
+        return None
+
+    tables = schema.get("tables")
+    if not isinstance(tables, list):
+        return None
+
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        columns = table.get("columns")
+        if not isinstance(columns, list):
+            continue
+
+        column_names = {
+            column.get("name")
+            for column in columns
+            if isinstance(column, dict) and isinstance(column.get("name"), str)
+        }
+        if {
+            "ПИВОВАРНЯ",
+            "НАЗВАНИЕ",
+            "СТИЛЬ",
+            "ДОСТУПНО В БАРЕ",
+        } <= column_names:
+            return _encode_table_doc_id(table.get("name"))
+
+    return None
+
+
+def parse_firestore_inventory_rows(rows_json: str) -> list[GlideListing]:
+    payload = json.loads(rows_json)
+    documents = payload.get("documents")
+    if not isinstance(documents, list):
+        return []
+
+    listings: list[GlideListing] = []
+    seen: set[tuple[str, str]] = set()
+
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        fields = _decode_firestore_fields(document.get("fields", {}))
+        if not isinstance(fields, dict):
+            continue
+        if fields.get("ДОСТУПНО В БАРЕ") is not True:
+            continue
+
+        name = _clean_text(str(fields.get("НАЗВАНИЕ", "")))
+        if not name:
+            continue
+
+        brewery = _clean_text(str(fields.get("ПИВОВАРНЯ", ""))) or None
+        key = (_normalize_text(name), _normalize_text(brewery or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        style = _clean_text(str(fields.get("СТИЛЬ", ""))) or None
+        untappd_url = _clean_text(str(fields.get("ОТКРЫТЬ В UNTAPPD", ""))) or None
+        rating_hint = _parse_rating_hint(fields.get("ОЦЕНКА В UNTAPPD"))
+        listings.append(
+            GlideListing(
+                name=name,
+                brewery=brewery,
+                style=style,
+                untappd_url=untappd_url,
+                rating_hint=rating_hint,
+            )
+        )
+
+    return listings
 
 
 def parse_untappd_beer_page(html: str) -> UntappdBeerPage:
@@ -412,6 +517,10 @@ class BeerTopService:
             glide_html = await self.fetch_glide_html(glide_url)
             listings = parse_glide_listings(glide_html)
             if not listings:
+                app_id = extract_glide_app_id(glide_url)
+                if app_id:
+                    listings = await self.fetch_firestore_inventory(app_id)
+            if not listings:
                 return None
 
             entries = await self.resolve_untappd_matches(listings)
@@ -431,35 +540,67 @@ class BeerTopService:
         self._cache_until = datetime.now(UTC) + self._cache_ttl
         return text
 
-    async def resolve_untappd_matches(self, listings: list[GlideListing]) -> list[BeerEntry]:
-        entries: list[BeerEntry] = []
+    async def fetch_firestore_inventory(self, app_id: str) -> list[GlideListing]:
+        document_json = await self.fetch_published_data_document(app_id)
+        table_doc_id = extract_inventory_table_doc_id(document_json)
+        if table_doc_id is None:
+            return []
 
-        for listing in listings:
+        pages = await self.fetch_table_rows_pages(app_id, table_doc_id)
+        listings: list[GlideListing] = []
+        seen: set[tuple[str, str]] = set()
+        for page in pages:
+            for listing in parse_firestore_inventory_rows(page):
+                key = (_normalize_text(listing.name), _normalize_text(listing.brewery or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                listings.append(listing)
+        return _prioritize_direct_untappd_candidates(listings)
+
+    async def resolve_untappd_matches(self, listings: list[GlideListing]) -> list[BeerEntry]:
+        semaphore = asyncio.Semaphore(8)
+
+        async def enrich_listing(listing: GlideListing) -> BeerEntry | None:
             try:
+                if listing.untappd_url and listing.style:
+                    async with semaphore:
+                        page_html = await self.fetch_untappd_beer_page_html(listing.untappd_url)
+                    details = parse_untappd_beer_page(page_html)
+                    return BeerEntry(
+                        name=listing.name,
+                        brewery=listing.brewery,
+                        style=listing.style,
+                        rating=details.rating,
+                        rating_count=details.rating_count,
+                    )
+
                 query = listing.name
                 if listing.brewery:
                     query = f"{listing.name} {listing.brewery}"
-                search_html = await self.fetch_untappd_search_html(query)
+                async with semaphore:
+                    search_html = await self.fetch_untappd_search_html(query)
                 match = select_best_untappd_match(listing, parse_untappd_search_results(search_html))
                 if match is None:
-                    continue
+                    return None
 
-                page_html = await self.fetch_untappd_beer_page_html(match.url)
+                async with semaphore:
+                    page_html = await self.fetch_untappd_beer_page_html(match.url)
                 details = parse_untappd_beer_page(page_html)
-            except Exception:
-                LOGGER.exception("Beer enrichment failed for %s", listing.name)
-                continue
+            except Exception as exc:
+                LOGGER.warning("Beer enrichment failed for %s: %s", listing.name, exc)
+                return None
 
-            entries.append(
-                BeerEntry(
-                    name=match.name,
-                    brewery=match.brewery,
-                    style=match.style,
-                    rating=details.rating,
-                    rating_count=details.rating_count,
-                )
+            return BeerEntry(
+                name=match.name,
+                brewery=match.brewery,
+                style=match.style,
+                rating=details.rating,
+                rating_count=details.rating_count,
             )
 
+        results = await asyncio.gather(*(enrich_listing(listing) for listing in listings))
+        entries = [entry for entry in results if entry is not None]
         return entries
 
     async def fetch_channel_html(self) -> str:
@@ -467,6 +608,32 @@ class BeerTopService:
 
     async def fetch_glide_html(self, glide_url: str) -> str:
         return await self._fetch_text(glide_url)
+
+    async def fetch_published_data_document(self, app_id: str) -> str:
+        return await self._fetch_text(GLIDE_PUBLISHED_DATA_URL.format(app_id=quote(app_id, safe="")))
+
+    async def fetch_table_rows_pages(self, app_id: str, table_doc_id: str) -> list[str]:
+        pages: list[str] = []
+        page_token: str | None = None
+
+        while True:
+            url = GLIDE_TABLE_ROWS_URL.format(
+                app_id=quote(app_id, safe=""),
+                table_doc_id=quote(table_doc_id, safe=""),
+            )
+            if page_token:
+                url = f"{url}?{urlencode({'pageToken': page_token})}"
+
+            page = await self._fetch_text(url)
+            pages.append(page)
+
+            payload = json.loads(page)
+            next_page_token = payload.get("nextPageToken")
+            if not isinstance(next_page_token, str) or not next_page_token:
+                break
+            page_token = next_page_token
+
+        return pages
 
     async def fetch_untappd_search_html(self, query: str) -> str:
         return await self._fetch_text(UNTAPPD_SEARCH_URL.format(query=quote_plus(query)))
@@ -615,6 +782,124 @@ def _find_aggregate_rating(payload: object) -> dict[str, object] | None:
                 return found
 
     return None
+
+
+def _decode_published_schema(value: str) -> object:
+    try:
+        raw = value.encode("latin1")
+        return json.loads(gzip.decompress(raw).decode("utf-8"))
+    except (UnicodeEncodeError, OSError, json.JSONDecodeError):
+        return json.loads(value)
+
+
+def _encode_table_doc_id(table_name: object) -> str | None:
+    if not isinstance(table_name, dict):
+        return None
+
+    raw_name = table_name.get("name")
+    if not isinstance(raw_name, str) or not raw_name:
+        return None
+
+    if table_name.get("isSpecial") is True:
+        return f"${raw_name}"
+
+    encoded = "_" + "".join(
+        "#_" if char == "/" else "##" if char == "#" else char
+        for char in raw_name
+    )
+    if len(encoded) > 1500:
+        encoded = hashlib.md5(encoded.encode("utf-8")).hexdigest()
+    return encoded
+
+
+def _decode_firestore_fields(fields: object) -> dict[str, object]:
+    if not isinstance(fields, dict):
+        return {}
+    return {
+        key: _decode_firestore_value(value)
+        for key, value in fields.items()
+        if isinstance(key, str)
+    }
+
+
+def _decode_firestore_value(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+
+    if "stringValue" in value:
+        return value["stringValue"]
+    if "integerValue" in value:
+        return int(value["integerValue"])
+    if "doubleValue" in value:
+        return float(value["doubleValue"])
+    if "booleanValue" in value:
+        return bool(value["booleanValue"])
+    if "nullValue" in value:
+        return None
+    if "timestampValue" in value:
+        return value["timestampValue"]
+    if "mapValue" in value:
+        return _decode_firestore_fields(value["mapValue"].get("fields", {}))
+    if "arrayValue" in value:
+        values = value["arrayValue"].get("values", [])
+        return [_decode_firestore_value(item) for item in values]
+
+    return value
+
+
+def _parse_rating_hint(value: object) -> float | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().replace(",", ".")
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def _prioritize_direct_untappd_candidates(
+    listings: list[GlideListing],
+    *,
+    per_category_limit: int = 12,
+) -> list[GlideListing]:
+    direct_candidates: dict[str, list[GlideListing]] = {category: [] for category in CATEGORY_ORDER}
+    fallback_listings: list[GlideListing] = []
+
+    for listing in listings:
+        if not listing.untappd_url or not listing.style:
+            fallback_listings.append(listing)
+            continue
+        category = categorize_style(listing.style)
+        if category is None:
+            continue
+        direct_candidates[category].append(listing)
+
+    prioritized: list[GlideListing] = []
+    seen: set[tuple[str, str]] = set()
+
+    for category in CATEGORY_ORDER:
+        category_listings = sorted(
+            direct_candidates[category],
+            key=lambda listing: (
+                -(listing.rating_hint if listing.rating_hint is not None else -1.0),
+                listing.name,
+            ),
+        )
+        for listing in category_listings[:per_category_limit]:
+            key = (_normalize_text(listing.name), _normalize_text(listing.brewery or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            prioritized.append(listing)
+
+    for listing in fallback_listings:
+        key = (_normalize_text(listing.name), _normalize_text(listing.brewery or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        prioritized.append(listing)
+
+    return prioritized
 
 
 def _clean_text(value: str) -> str:
