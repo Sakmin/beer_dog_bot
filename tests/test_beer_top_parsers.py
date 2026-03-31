@@ -50,8 +50,9 @@ def test_format_beer_message_groups_only_non_empty_categories():
                 )
             ],
             "IPA": [BeerEntry("Beta", "Brewery Two", "IPA - American", 4.01, 200, "6/40/16")],
-            "Sour Ale": [],
             "Pastry Sour Ale": [],
+            "Sour Ale": [],
+            "Weizen": [BeerEntry("Delta", "Wheat House", "Hefeweizen", 3.97, 89, "5,4/12/13")],
             "Безалкогольное": [
                 BeerEntry("Gamma", None, "Безалкогольное", 3.88, 17, None)
             ],
@@ -64,17 +65,22 @@ def test_format_beer_message_groups_only_non_empty_categories():
             [
                 "Смотри какое интересное пиво я нашел:",
                 "",
-                "<b><i>New England IPA</i></b>",
+                "<b><i>🏴 New England IPA</i></b>",
                 "• <b>Alpha</b> (Chinook, Citra, mango) - Brewery",
                 "ALC: 5/3/12,5",
                 "Untappd 4.12 | 1,234 ratings",
                 "",
-                "<b><i>IPA</i></b>",
+                "<b><i>🌲 IPA</i></b>",
                 "• <b>Beta</b> - Brewery Two",
                 "ALC: 6/40/16",
                 "Untappd 4.01 | 200 ratings",
                 "",
-                "<b><i>Безалкогольное</i></b>",
+                "<b><i>🇩🇪 Weizen</i></b>",
+                "• <b>Delta</b> - Wheat House",
+                "ALC: 5,4/12/13",
+                "Untappd 3.97 | 89 ratings",
+                "",
+                "<b><i>0️ Безалкогольное</i></b>",
                 "• <b>Gamma</b>",
                 "Untappd 3.88 | 17 ratings",
             ]
