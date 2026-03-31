@@ -82,7 +82,7 @@ def test_send_survey_still_sends_two_polls_when_beer_lookup_fails(monkeypatch):
     ]
 
 
-def test_top_beer_command_sends_recommendation_in_private_and_group_chats(monkeypatch):
+def test_top_beer_command_sends_recommendation_in_supported_chat_types(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
 
     async def fake_build_message():
@@ -95,7 +95,7 @@ def test_top_beer_command_sends_recommendation_in_private_and_group_chats(monkey
         raising=False,
     )
 
-    for chat_type in ("private", "group"):
+    for chat_type in ("private", "group", "supergroup"):
         message = FakeMessage(chat_type)
 
         asyncio.run(bot_module.cmd_top_beer(message))
@@ -162,3 +162,41 @@ def test_top_beer_command_uses_fallback_when_builder_raises(monkeypatch):
     assert message.answers == [
         "Пока не получилось собрать подборку пива. Попробуй чуть позже."
     ]
+
+
+def test_send_survey_keeps_polls_when_beer_message_send_fails(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    calls = []
+
+    class FakeBot:
+        async def send_poll(self, **kwargs):
+            calls.append(("poll", kwargs["question"]))
+            return SimpleNamespace(message_id=len(calls))
+
+        async def send_message(self, chat_id, text):
+            calls.append(("message", chat_id, text))
+            raise RuntimeError("telegram send failed")
+
+    async def fake_build_message():
+        return "Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha"
+
+    monkeypatch.setattr(bot_module, "bot", FakeBot())
+    monkeypatch.setattr(
+        bot_module,
+        "build_beer_top_message",
+        fake_build_message,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.send_survey(789))
+
+    assert calls == [
+        ("poll", "Идем в бар на этой неделе?"),
+        ("poll", "Когда тебе удобно?"),
+        (
+            "message",
+            789,
+            "Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha",
+        ),
+    ]
+    assert bot_module.active_polls[789] == [1, 2]
