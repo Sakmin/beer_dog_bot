@@ -4,10 +4,12 @@ from pathlib import Path
 
 from beer_top import (
     BeerTopService,
+    BeerEntry,
     GlideListing,
     UntappdSearchResult,
     extract_glide_app_id,
     extract_inventory_table_doc_id,
+    parse_search_query,
     parse_firestore_inventory_rows,
     parse_glide_listings,
     parse_untappd_beer_page,
@@ -364,6 +366,79 @@ def test_build_message_returns_none_on_total_upstream_failure():
     message = asyncio.run(service.build_message())
 
     assert message is None
+
+
+def test_search_message_returns_exact_matches():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Poetry of Love",
+            brewery="Rewort Brewery",
+            style="New England IPA",
+            rating=4.18,
+            rating_count=1800,
+            alc="6,9/30/16",
+            flavor_notes="Simcoe, mandarin",
+        ),
+        BeerEntry(
+            name="Big Bitter",
+            brewery="Hop Lab",
+            style="IPA",
+            rating=4.25,
+            rating_count=2200,
+            alc="7,8/50/18",
+            flavor_notes="Simcoe, pine",
+        ),
+    ]
+
+    async def fake_fetch_ranked_entries():
+        return entries
+
+    service.fetch_ranked_entries = fake_fetch_ranked_entries
+
+    message = asyncio.run(service.search_message("ne ipa simcoe до 7 градусов с высоким рейтингом"))
+
+    assert message is not None
+    assert "Вот что нашел по запросу" in message
+    assert "Poetry of Love" in message
+    assert "Big Bitter" not in message
+
+
+def test_search_message_falls_back_to_closest_matches():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Poetry of Love",
+            brewery="Rewort Brewery",
+            style="New England IPA",
+            rating=4.18,
+            rating_count=1800,
+            alc="7,3/35/17",
+            flavor_notes="Chinook, Columbus, сок мандарина",
+        ),
+        BeerEntry(
+            name="Soft Wheat",
+            brewery="Brew Farm",
+            style="Hefeweizen",
+            rating=3.95,
+            rating_count=400,
+            alc="5,1/15/12",
+            flavor_notes="banana, clove",
+        ),
+    ]
+
+    async def fake_fetch_ranked_entries():
+        return entries
+
+    service.fetch_ranked_entries = fake_fetch_ranked_entries
+
+    message = asyncio.run(service.search_message("ne ipa simcoe до 6 градусов"))
+
+    assert message is not None
+    assert "Точного совпадения по запросу" in message
+    assert "Poetry of Love" in message
 
 
 def test_build_message_uses_cached_result_for_repeated_requests():

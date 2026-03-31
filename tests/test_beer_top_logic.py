@@ -1,4 +1,4 @@
-from beer_top import BeerEntry, categorize_style, rank_category_entries, weighted_score
+from beer_top import BeerEntry, categorize_style, parse_search_query, rank_category_entries, weighted_score
 
 
 def test_categorize_style_separates_neipa_from_regular_ipa():
@@ -61,3 +61,12 @@ def test_rank_category_entries_prefers_rating_with_real_review_volume():
     ranked = rank_category_entries(beers)["IPA"]
 
     assert ranked[0].name == "Crowd Favorite"
+
+
+def test_parse_search_query_extracts_filters_and_tokens():
+    query = parse_search_query("ne ipa simcoe до 7 градусов алкоголя с высоким рейтингом")
+
+    assert query.categories == ("New England IPA", "IPA")
+    assert query.max_alc == 7.0
+    assert query.min_rating == 4.0
+    assert "simcoe" in query.tokens

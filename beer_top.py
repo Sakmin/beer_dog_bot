@@ -84,6 +84,15 @@ class UntappdBeerPage:
     rating_count: int
 
 
+@dataclass(slots=True)
+class BeerSearchQuery:
+    raw_text: str
+    categories: tuple[str, ...] = ()
+    max_alc: float | None = None
+    min_rating: float | None = None
+    tokens: tuple[str, ...] = ()
+
+
 def categorize_style(style: str, alc: str | None = None) -> str | None:
     normalized = style.lower()
 
@@ -505,6 +514,93 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
     return "\n".join(lines)
 
 
+def parse_search_query(text: str) -> BeerSearchQuery:
+    normalized = _normalize_text(text)
+    categories: list[str] = []
+
+    category_aliases = (
+        ("New England IPA", ("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa")),
+        ("IPA", (" ipa ", "ipa", "american ipa", "west coast ipa")),
+        ("Pastry Sour Ale", ("pastry sour", "smoothie sour", "pastry")),
+        ("Sour Ale", ("sour ale", "sour", "gose")),
+        ("Weizen", ("weizen", "hefeweizen", "wheat", "witbier", "white ale")),
+        ("Безалкогольное", ("безал", "безалкоголь", "non alco", "non alcohol", "non alcoholic")),
+    )
+    padded = f" {normalized} "
+    for category, aliases in category_aliases:
+        if any(f" {_normalize_text(alias)} " in padded for alias in aliases):
+            categories.append(category)
+
+    max_alc: float | None = None
+    alc_match = re.search(
+        r"(?:до|не крепче|макс(?:имум)?|maximum|max)\s*(\d+(?:[.,]\d+)?)",
+        text,
+        re.IGNORECASE,
+    )
+    if alc_match:
+        max_alc = float(alc_match.group(1).replace(",", "."))
+
+    min_rating: float | None = None
+    rating_match = re.search(
+        r"(?:от|>=?)\s*(4(?:[.,]\d+)?)\s*(?:рейтинга|рейтинг)?",
+        text,
+        re.IGNORECASE,
+    )
+    if rating_match:
+        min_rating = float(rating_match.group(1).replace(",", "."))
+    elif re.search(r"высок\w*\s+рейтинг|топ|top rating", text, re.IGNORECASE):
+        min_rating = 4.0
+
+    stop_words = {
+        "beer", "ale", "ipa", "sour", "pastry", "new", "england", "ne", "hazy",
+        "weizen", "wheat", "non", "alco", "alcohol", "безал", "безалкогольное",
+        "до", "не", "крепче", "максимум", "max", "maximum", "от", "рейтинг",
+        "рейтинга", "рейтингом",
+        "высоким", "высокий", "высокого", "с", "и", "на", "по", "пиво",
+        "градусов", "градуса", "градус", "алкоголя",
+    }
+    tokens = tuple(
+        token
+        for token in _normalize_text(text).split()
+        if len(token) > 1 and not re.fullmatch(r"\d+(?:[.,]\d+)?", token) and token not in stop_words
+    )
+
+    return BeerSearchQuery(
+        raw_text=text.strip(),
+        categories=tuple(dict.fromkeys(categories)),
+        max_alc=max_alc,
+        min_rating=min_rating,
+        tokens=tokens,
+    )
+
+
+def format_beer_search_message(query: BeerSearchQuery, beers: list[BeerEntry], *, fallback: bool) -> str:
+    intro = (
+        f'Точного совпадения по запросу "{escape(query.raw_text)}" не нашел, вот самые близкие варианты:'
+        if fallback
+        else f'Вот что нашел по запросу "{escape(query.raw_text)}":'
+    )
+    lines = [intro]
+
+    for beer in beers[:5]:
+        category = categorize_style(beer.style, beer.alc)
+        header = f"• <b>{escape(beer.name)}</b>"
+        if beer.flavor_notes:
+            header = f"{header} ({escape(beer.flavor_notes)})"
+        brewery = _strip_city_suffix(beer.brewery)
+        if brewery:
+            header = f"{header} - {escape(brewery)}"
+        lines.append("")
+        lines.append(header)
+        if category:
+            lines.append(f"Категория: {escape(category)}")
+        if beer.alc:
+            lines.append(f"ALC: {escape(beer.alc)}")
+        lines.append(f"Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings")
+
+    return "\n".join(lines)
+
+
 def rank_category_entries(entries: list[BeerEntry]) -> dict[str, list[BeerEntry]]:
     grouped: dict[str, list[BeerEntry]] = {category: [] for category in CATEGORY_ORDER}
 
@@ -543,6 +639,7 @@ class BeerTopService:
         self._request_timeout = request_timeout
         self._cache_text: str | None = None
         self._cache_until: datetime | None = None
+        self._cache_entries: list[BeerEntry] | None = None
 
     async def build_message(self) -> str | None:
         if self._cache_text and self._cache_until and datetime.now(UTC) < self._cache_until:
@@ -551,21 +648,7 @@ class BeerTopService:
         stale_cache = self._cache_text
 
         try:
-            channel_html = await self.fetch_channel_html()
-            glide_url = extract_latest_glide_url(channel_html)
-            if not glide_url:
-                return None
-
-            glide_html = await self.fetch_glide_html(glide_url)
-            listings = parse_glide_listings(glide_html)
-            if not listings:
-                app_id = extract_glide_app_id(glide_url)
-                if app_id:
-                    listings = await self.fetch_firestore_inventory(app_id)
-            if not listings:
-                return None
-
-            entries = await self.resolve_untappd_matches(listings)
+            entries = await self.fetch_ranked_entries()
         except Exception:
             LOGGER.exception("Beer top refresh failed")
             return stale_cache
@@ -581,6 +664,72 @@ class BeerTopService:
         self._cache_text = text
         self._cache_until = datetime.now(UTC) + self._cache_ttl
         return text
+
+    async def search_message(self, query_text: str) -> str | None:
+        query = parse_search_query(query_text)
+        if not query.raw_text:
+            return None
+
+        entries = await self.fetch_ranked_entries()
+        if not entries:
+            return None
+
+        exact_matches = self.search_entries(entries, query)
+        if exact_matches:
+            return format_beer_search_message(query, exact_matches, fallback=False)
+
+        closest_matches = self.closest_matches(entries, query)
+        if not closest_matches:
+            return None
+        return format_beer_search_message(query, closest_matches, fallback=True)
+
+    async def fetch_ranked_entries(self) -> list[BeerEntry]:
+        if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
+            return self._cache_entries
+
+        channel_html = await self.fetch_channel_html()
+        glide_url = extract_latest_glide_url(channel_html)
+        if not glide_url:
+            return []
+
+        glide_html = await self.fetch_glide_html(glide_url)
+        listings = parse_glide_listings(glide_html)
+        if not listings:
+            app_id = extract_glide_app_id(glide_url)
+            if app_id:
+                listings = await self.fetch_firestore_inventory(app_id)
+        if not listings:
+            return []
+
+        entries = await self.resolve_untappd_matches(listings)
+        self._cache_entries = entries
+        self._cache_until = datetime.now(UTC) + self._cache_ttl
+        return entries
+
+    def search_entries(self, entries: list[BeerEntry], query: BeerSearchQuery) -> list[BeerEntry]:
+        matches: list[BeerEntry] = []
+        for entry in entries:
+            if not _entry_matches_query(entry, query):
+                continue
+            matches.append(entry)
+
+        return sorted(
+            matches,
+            key=lambda entry: (
+                -_entry_search_score(entry, query, exact=True),
+                -weighted_score(entry),
+                entry.name,
+            ),
+        )
+
+    def closest_matches(self, entries: list[BeerEntry], query: BeerSearchQuery) -> list[BeerEntry]:
+        scored = [
+            (entry, _entry_search_score(entry, query, exact=False))
+            for entry in entries
+        ]
+        scored = [item for item in scored if item[1] > 0]
+        scored.sort(key=lambda item: (-item[1], -weighted_score(item[0]), item[0].name))
+        return [entry for entry, _ in scored[:5]]
 
     async def fetch_firestore_inventory(self, app_id: str) -> list[GlideListing]:
         document_json = await self.fetch_published_data_document(app_id)
@@ -957,6 +1106,65 @@ def _extract_flavor_notes(fields: dict[str, object]) -> str | None:
 
     notes = _clean_text(match.group(1))
     return notes or None
+
+
+def _entry_search_blob(entry: BeerEntry) -> str:
+    parts = [
+        entry.name,
+        entry.brewery or "",
+        entry.style,
+        entry.flavor_notes or "",
+    ]
+    return _normalize_text(" ".join(parts))
+
+
+def _entry_matches_query(entry: BeerEntry, query: BeerSearchQuery) -> bool:
+    category = categorize_style(entry.style, entry.alc)
+    if query.categories and category not in query.categories:
+        return False
+
+    alc_value = _parse_alc_value(entry.alc)
+    if query.max_alc is not None and (alc_value is None or alc_value > query.max_alc):
+        return False
+
+    if query.min_rating is not None and entry.rating < query.min_rating:
+        return False
+
+    searchable = _entry_search_blob(entry)
+    return all(token in searchable for token in query.tokens)
+
+
+def _entry_search_score(entry: BeerEntry, query: BeerSearchQuery, *, exact: bool) -> float:
+    score = weighted_score(entry)
+    searchable = _entry_search_blob(entry)
+    category = categorize_style(entry.style, entry.alc)
+
+    if query.categories:
+        score += 3.0 if category in query.categories else (-1.0 if exact else 0.0)
+    if query.min_rating is not None:
+        score += 2.0 if entry.rating >= query.min_rating else (-1.5 if exact else -0.25)
+
+    alc_value = _parse_alc_value(entry.alc)
+    if query.max_alc is not None:
+        if alc_value is None:
+            score += -1.0 if exact else 0.0
+        elif alc_value <= query.max_alc:
+            score += 2.0
+        else:
+            score += -2.0 if exact else max(-1.5, (query.max_alc - alc_value) * 0.3)
+
+    for token in query.tokens:
+        if token in searchable:
+            score += 2.5
+        elif not exact:
+            similarity = max(
+                (SequenceMatcher(None, token, word).ratio() for word in searchable.split()),
+                default=0.0,
+            )
+            if similarity >= 0.75:
+                score += 1.0
+
+    return score
 
 
 def _prioritize_direct_untappd_candidates(
