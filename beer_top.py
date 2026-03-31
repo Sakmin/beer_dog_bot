@@ -27,12 +27,12 @@ CATEGORY_ORDER = (
 )
 
 CATEGORY_EMOJI = {
-    "New England IPA": "🏴",
+    "New England IPA": "🇺🇸",
     "IPA": "🌲",
     "Pastry Sour Ale": "🥧",
     "Sour Ale": "🍓",
     "Weizen": "🇩🇪",
-    "Безалкогольное": "0️",
+    "Безалкогольное": "🚫",
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -479,8 +479,10 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
 
         lines.append("")
         emoji = CATEGORY_EMOJI.get(category)
-        label = f"{emoji} {category}" if emoji else category
-        lines.append(f"<b><i>{escape(label)}</i></b>")
+        label = category
+        if emoji:
+            label = f"{emoji}{emoji}{emoji} {category} {emoji}{emoji}{emoji}"
+        lines.append(f"<b>{escape(label)}</b>")
 
         for beer in beers[:5]:
             header = f"• <b>{escape(beer.name)}</b>"
