@@ -6,6 +6,9 @@ from beer_top import (
     BeerTopService,
     GlideListing,
     UntappdSearchResult,
+    extract_glide_app_id,
+    extract_inventory_table_doc_id,
+    parse_firestore_inventory_rows,
     parse_glide_listings,
     parse_untappd_beer_page,
     parse_untappd_search_results,
@@ -52,6 +55,63 @@ def test_parse_glide_listings_ignores_name_only_unrelated_object():
     """
 
     assert parse_glide_listings(html) == []
+
+
+def test_extract_glide_app_id_reads_play_url():
+    assert (
+        extract_glide_app_id("https://go.glideapps.com/play/X56sGynCgXQC4bzpzWIm")
+        == "X56sGynCgXQC4bzpzWIm"
+    )
+
+
+def test_extract_inventory_table_doc_id_uses_published_schema():
+    document = """
+    {
+      "fields": {
+        "schema": {
+          "stringValue": "{\\"tables\\":[{\\"name\\":{\\"isSpecial\\":false,\\"name\\":\\"50c867b5-a28d-45b0-9f39-3775b2c42586\\"},\\"columns\\":[{\\"name\\":\\"ПИВОВАРНЯ\\"},{\\"name\\":\\"НАЗВАНИЕ\\"},{\\"name\\":\\"СТИЛЬ\\"},{\\"name\\":\\"ДОСТУПНО В БАРЕ\\"}]}]}"
+        }
+      }
+    }
+    """
+
+    assert extract_inventory_table_doc_id(document) == "_50c867b5-a28d-45b0-9f39-3775b2c42586"
+
+
+def test_parse_firestore_inventory_rows_filters_available_beers():
+    rows = """
+    {
+      "documents": [
+        {
+          "fields": {
+            "НАЗВАНИЕ": {"stringValue": "Green Jelly"},
+            "ПИВОВАРНЯ": {"stringValue": "Hop Head"},
+            "СТИЛЬ": {"stringValue": "Sour - Smoothie / Pastry"},
+            "ДОСТУПНО В БАРЕ": {"booleanValue": true},
+            "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/hop-head/green-jelly/1"}
+          }
+        },
+        {
+          "fields": {
+            "НАЗВАНИЕ": {"stringValue": "Hidden Draft"},
+            "ПИВОВАРНЯ": {"stringValue": "Ghost Taproom"},
+            "СТИЛЬ": {"stringValue": "IPA - American"},
+            "ДОСТУПНО В БАРЕ": {"booleanValue": false},
+            "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/ghost/hidden/2"}
+          }
+        }
+      ]
+    }
+    """
+
+    assert parse_firestore_inventory_rows(rows) == [
+        GlideListing(
+            name="Green Jelly",
+            brewery="Hop Head",
+            style="Sour - Smoothie / Pastry",
+            untappd_url="https://untappd.com/b/hop-head/green-jelly/1",
+        )
+    ]
 
 
 def test_parse_untappd_search_results_extracts_server_rendered_result():
@@ -194,6 +254,70 @@ def test_build_message_returns_text_on_success():
     assert "Смотри какое интересное пиво я нашел:" in message
     assert "Pastry Sour Ale" in message
     assert "Berry Blast Smoothie - Funky Brewery | Untappd 4.18 | 1,248 ratings" in message
+
+
+def test_build_message_falls_back_to_firestore_inventory_when_glide_html_is_shell_only():
+    service = BeerTopService()
+
+    async def fake_channel_html() -> str:
+        return """
+        <div class="tgme_widget_message_wrap">
+          <a href="https://go.glideapps.com/play/X56sGynCgXQC4bzpzWIm">Current list</a>
+        </div>
+        """
+
+    async def fake_glide_html(url: str) -> str:
+        assert url == "https://go.glideapps.com/play/X56sGynCgXQC4bzpzWIm"
+        return "<html><body><div id='root'></div></body></html>"
+
+    async def fake_published_data_document(app_id: str) -> str:
+        assert app_id == "X56sGynCgXQC4bzpzWIm"
+        return """
+        {
+          "fields": {
+            "schema": {
+              "stringValue": "{\\"tables\\":[{\\"name\\":{\\"isSpecial\\":false,\\"name\\":\\"50c867b5-a28d-45b0-9f39-3775b2c42586\\"},\\"columns\\":[{\\"name\\":\\"ПИВОВАРНЯ\\"},{\\"name\\":\\"НАЗВАНИЕ\\"},{\\"name\\":\\"СТИЛЬ\\"},{\\"name\\":\\"ДОСТУПНО В БАРЕ\\"}]}]}"
+            }
+          }
+        }
+        """
+
+    async def fake_table_rows(app_id: str, table_doc_id: str) -> list[str]:
+        assert app_id == "X56sGynCgXQC4bzpzWIm"
+        assert table_doc_id == "_50c867b5-a28d-45b0-9f39-3775b2c42586"
+        return [
+            """
+            {
+              "documents": [
+                {
+                  "fields": {
+                    "НАЗВАНИЕ": {"stringValue": "Green Jelly"},
+                    "ПИВОВАРНЯ": {"stringValue": "Hop Head"},
+                    "СТИЛЬ": {"stringValue": "Sour - Smoothie / Pastry"},
+                    "ДОСТУПНО В БАРЕ": {"booleanValue": true},
+                    "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/hop-head/green-jelly/1"}
+                  }
+                }
+              ]
+            }
+            """
+        ]
+
+    async def fake_untappd_beer_page_html(url: str) -> str:
+        assert url == "https://untappd.com/b/hop-head/green-jelly/1"
+        return (FIXTURES / "untappd_beer_page_sample.html").read_text()
+
+    service.fetch_channel_html = fake_channel_html
+    service.fetch_glide_html = fake_glide_html
+    service.fetch_published_data_document = fake_published_data_document
+    service.fetch_table_rows_pages = fake_table_rows
+    service.fetch_untappd_beer_page_html = fake_untappd_beer_page_html
+
+    message = asyncio.run(service.build_message())
+
+    assert message is not None
+    assert "Pastry Sour Ale" in message
+    assert "Green Jelly - Hop Head | Untappd 4.18 | 1,248 ratings" in message
 
 
 def test_build_message_returns_none_on_total_upstream_failure():
