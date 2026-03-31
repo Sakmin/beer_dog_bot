@@ -905,13 +905,22 @@ def _extract_alc_text(fields: dict[str, object]) -> str | None:
 def _extract_flavor_notes(fields: dict[str, object]) -> str | None:
     description = fields.get("ОПИСАНИЕ")
     if not isinstance(description, str):
-        return None
+        description = ""
 
     cleaned = _clean_text(description)
-    if not cleaned:
+    if cleaned:
+        return cleaned
+
+    style = fields.get("СТИЛЬ")
+    if not isinstance(style, str):
         return None
 
-    return cleaned
+    match = re.search(r"\(([^()]+)\)\s*$", style)
+    if match is None:
+        return None
+
+    notes = _clean_text(match.group(1))
+    return notes or None
 
 
 def _prioritize_direct_untappd_candidates(

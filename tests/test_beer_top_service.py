@@ -116,6 +116,34 @@ def test_parse_firestore_inventory_rows_filters_available_beers():
     ]
 
 
+def test_parse_firestore_inventory_rows_falls_back_to_style_parentheses_for_flavor_notes():
+    rows = """
+    {
+      "documents": [
+        {
+          "fields": {
+            "НАЗВАНИЕ": {"stringValue": "Poetry of Love"},
+            "ПИВОВАРНЯ": {"stringValue": "Rewort Brewery"},
+            "СТИЛЬ": {"stringValue": "New England IPA (Chinook, Columbus, сок мандарина)"},
+            "ДОСТУПНО В БАРЕ": {"booleanValue": true},
+            "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/rewort/poetry-of-love/1"}
+          }
+        }
+      ]
+    }
+    """
+
+    assert parse_firestore_inventory_rows(rows) == [
+        GlideListing(
+            name="Poetry of Love",
+            brewery="Rewort Brewery",
+            style="New England IPA (Chinook, Columbus, сок мандарина)",
+            untappd_url="https://untappd.com/b/rewort/poetry-of-love/1",
+            flavor_notes="Chinook, Columbus, сок мандарина",
+        )
+    ]
+
+
 def test_parse_untappd_search_results_extracts_server_rendered_result():
     html = (FIXTURES / "untappd_search_sample.html").read_text()
 
