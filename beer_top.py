@@ -20,10 +20,20 @@ from urllib.request import Request, urlopen
 CATEGORY_ORDER = (
     "New England IPA",
     "IPA",
-    "Sour Ale",
     "Pastry Sour Ale",
+    "Sour Ale",
+    "Weizen",
     "Безалкогольное",
 )
+
+CATEGORY_EMOJI = {
+    "New England IPA": "🏴",
+    "IPA": "🌲",
+    "Pastry Sour Ale": "🥧",
+    "Sour Ale": "🍓",
+    "Weizen": "🇩🇪",
+    "Безалкогольное": "0️",
+}
 
 LOGGER = logging.getLogger(__name__)
 CHANNEL_URL = "https://t.me/s/beerhounds73"
@@ -74,13 +84,14 @@ class UntappdBeerPage:
     rating_count: int
 
 
-def categorize_style(style: str) -> str | None:
+def categorize_style(style: str, alc: str | None = None) -> str | None:
     normalized = style.lower()
 
     if any(
         marker in normalized
         for marker in (
             "безалкоголь",
+            "non-alco",
             "non-alcohol",
             "non alcoholic",
             "alcohol-free",
@@ -89,6 +100,10 @@ def categorize_style(style: str) -> str | None:
             "0%",
         )
     ):
+        return "Безалкогольное"
+
+    alc_value = _parse_alc_value(alc)
+    if alc_value is not None and alc_value < 1:
         return "Безалкогольное"
 
     is_sour_family = (
@@ -107,6 +122,12 @@ def categorize_style(style: str) -> str | None:
 
     if is_sour_family:
         return "Sour Ale"
+
+    if any(
+        marker in normalized
+        for marker in ("weizen", "wheat", "hefeweizen", "witbier", "white ale")
+    ):
+        return "Weizen"
 
     if "ipa" in normalized:
         return "IPA"
@@ -457,7 +478,9 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
             continue
 
         lines.append("")
-        lines.append(f"<b><i>{escape(category)}</i></b>")
+        emoji = CATEGORY_EMOJI.get(category)
+        label = f"{emoji} {category}" if emoji else category
+        lines.append(f"<b><i>{escape(label)}</i></b>")
 
         for beer in beers[:5]:
             header = f"• <b>{escape(beer.name)}</b>"
@@ -484,7 +507,7 @@ def rank_category_entries(entries: list[BeerEntry]) -> dict[str, list[BeerEntry]
     grouped: dict[str, list[BeerEntry]] = {category: [] for category in CATEGORY_ORDER}
 
     for entry in entries:
-        category = categorize_style(entry.style)
+        category = categorize_style(entry.style, entry.alc)
         if category is None:
             continue
         grouped[category].append(entry)
@@ -878,6 +901,17 @@ def _parse_rating_hint(value: object) -> float | None:
         return None
 
 
+def _parse_alc_value(value: str | None) -> float | None:
+    if not value:
+        return None
+
+    first_chunk = value.split("/", 1)[0].strip().replace(",", ".")
+    try:
+        return float(first_chunk)
+    except ValueError:
+        return None
+
+
 def _extract_alc_text(fields: dict[str, object]) -> str | None:
     known_keys = {
         "НАЗВАНИЕ",
@@ -935,7 +969,7 @@ def _prioritize_direct_untappd_candidates(
         if not listing.untappd_url or not listing.style:
             fallback_listings.append(listing)
             continue
-        category = categorize_style(listing.style)
+        category = categorize_style(listing.style, listing.alc)
         if category is None:
             continue
         direct_candidates[category].append(listing)

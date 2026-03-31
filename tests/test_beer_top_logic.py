@@ -18,6 +18,13 @@ def test_categorize_style_does_not_make_non_sour_styles_pastry_sour():
 
 def test_categorize_style_handles_non_alcoholic_beer():
     assert categorize_style("Безалкогольное пиво") == "Безалкогольное"
+    assert categorize_style("IPA - American", "0,5/20/10") == "Безалкогольное"
+    assert categorize_style("IPA - Non-Alco") == "Безалкогольное"
+
+
+def test_categorize_style_detects_weizen_family():
+    assert categorize_style("Hefeweizen") == "Weizen"
+    assert categorize_style("Wheat Beer") == "Weizen"
 
 
 def test_weighted_score_prefers_real_volume_over_tiny_samples():
