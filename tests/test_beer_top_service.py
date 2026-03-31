@@ -5,10 +5,12 @@ from pathlib import Path
 from beer_top import (
     BeerTopService,
     BeerEntry,
+    BeerSearchQuery,
     GlideListing,
     UntappdSearchResult,
     extract_glide_app_id,
     extract_inventory_table_doc_id,
+    merge_search_queries,
     parse_search_query,
     parse_firestore_inventory_rows,
     parse_glide_listings,
@@ -439,6 +441,49 @@ def test_search_message_falls_back_to_closest_matches():
     assert message is not None
     assert "Точного совпадения по запросу" in message
     assert "Poetry of Love" in message
+
+
+def test_merge_search_queries_prefers_llm_filters_and_keeps_rule_tokens():
+    merged = merge_search_queries(
+        BeerSearchQuery(
+            raw_text="ne ipa simcoe",
+            categories=("New England IPA",),
+            tokens=("simcoe",),
+        ),
+        BeerSearchQuery(
+            raw_text="ne ipa simcoe",
+            categories=("IPA",),
+            max_alc=7.0,
+            min_rating=4.0,
+            tokens=("citra",),
+        ),
+    )
+
+    assert merged.categories == ("IPA", "New England IPA")
+    assert merged.max_alc == 7.0
+    assert merged.min_rating == 4.0
+    assert merged.tokens == ("simcoe", "citra")
+
+
+def test_parse_user_query_merges_llm_result_when_available():
+    service = BeerTopService()
+
+    async def fake_llm_parse(query_text: str):
+        assert query_text == "что-то сочное, не sour, до 6.5"
+        return BeerSearchQuery(
+            raw_text=query_text,
+            exclude_categories=("Sour Ale", "Pastry Sour Ale"),
+            max_alc=6.5,
+            tokens=("juicy", "citra"),
+        )
+
+    service.parse_query_with_llm = fake_llm_parse
+
+    query = asyncio.run(service.parse_user_query("что-то сочное, не sour, до 6.5"))
+
+    assert query.max_alc == 6.5
+    assert query.exclude_categories == ("Sour Ale", "Pastry Sour Ale")
+    assert "juicy" in query.tokens
 
 
 def test_build_message_uses_cached_result_for_repeated_requests():

@@ -10,11 +10,19 @@ from html import escape
 import json
 import logging
 import math
+import os
 import re
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import quote, quote_plus, urlencode, urljoin
 from urllib.request import Request, urlopen
+
+from pydantic import BaseModel, Field
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - optional dependency in local dev
+    OpenAI = None
 
 
 CATEGORY_ORDER = (
@@ -88,9 +96,20 @@ class UntappdBeerPage:
 class BeerSearchQuery:
     raw_text: str
     categories: tuple[str, ...] = ()
+    exclude_categories: tuple[str, ...] = ()
     max_alc: float | None = None
     min_rating: float | None = None
     tokens: tuple[str, ...] = ()
+
+
+class _LLMBeerSearchQuery(BaseModel):
+    categories: list[str] = Field(default_factory=list)
+    exclude_categories: list[str] = Field(default_factory=list)
+    max_alc: float | None = None
+    min_rating: float | None = None
+    flavor_tokens: list[str] = Field(default_factory=list)
+    hop_tokens: list[str] = Field(default_factory=list)
+    reasoning_note: str | None = None
 
 
 def categorize_style(style: str, alc: str | None = None) -> str | None:
@@ -574,6 +593,19 @@ def parse_search_query(text: str) -> BeerSearchQuery:
     )
 
 
+def merge_search_queries(primary: BeerSearchQuery, secondary: BeerSearchQuery) -> BeerSearchQuery:
+    return BeerSearchQuery(
+        raw_text=primary.raw_text or secondary.raw_text,
+        categories=tuple(dict.fromkeys((*secondary.categories, *primary.categories))),
+        exclude_categories=tuple(
+            dict.fromkeys((*secondary.exclude_categories, *primary.exclude_categories))
+        ),
+        max_alc=secondary.max_alc if secondary.max_alc is not None else primary.max_alc,
+        min_rating=secondary.min_rating if secondary.min_rating is not None else primary.min_rating,
+        tokens=tuple(dict.fromkeys((*primary.tokens, *secondary.tokens))),
+    )
+
+
 def format_beer_search_message(query: BeerSearchQuery, beers: list[BeerEntry], *, fallback: bool) -> str:
     intro = (
         f'Точного совпадения по запросу "{escape(query.raw_text)}" не нашел, вот самые близкие варианты:'
@@ -640,6 +672,13 @@ class BeerTopService:
         self._cache_text: str | None = None
         self._cache_until: datetime | None = None
         self._cache_entries: list[BeerEntry] | None = None
+        self._openai_api_key = os.getenv("OPENAI_API_KEY")
+        self._openai_model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        self._openai_client = (
+            OpenAI(api_key=self._openai_api_key)
+            if OpenAI is not None and self._openai_api_key
+            else None
+        )
 
     async def build_message(self) -> str | None:
         if self._cache_text and self._cache_until and datetime.now(UTC) < self._cache_until:
@@ -666,7 +705,7 @@ class BeerTopService:
         return text
 
     async def search_message(self, query_text: str) -> str | None:
-        query = parse_search_query(query_text)
+        query = await self.parse_user_query(query_text)
         if not query.raw_text:
             return None
 
@@ -682,6 +721,69 @@ class BeerTopService:
         if not closest_matches:
             return None
         return format_beer_search_message(query, closest_matches, fallback=True)
+
+    async def parse_user_query(self, query_text: str) -> BeerSearchQuery:
+        parsed = parse_search_query(query_text)
+        llm_query = await self.parse_query_with_llm(query_text)
+        if llm_query is None:
+            return parsed
+        return merge_search_queries(parsed, llm_query)
+
+    async def parse_query_with_llm(self, query_text: str) -> BeerSearchQuery | None:
+        if self._openai_client is None:
+            return None
+
+        try:
+            llm_result = await asyncio.to_thread(self._parse_query_with_llm_sync, query_text)
+        except Exception as exc:
+            LOGGER.warning("LLM beer query parse failed: %s", exc)
+            return None
+
+        if llm_result is None:
+            return None
+
+        categories = tuple(category for category in llm_result.categories if category in CATEGORY_ORDER)
+        exclude_categories = tuple(
+            category for category in llm_result.exclude_categories if category in CATEGORY_ORDER
+        )
+        tokens = tuple(
+            dict.fromkeys(
+                _normalize_text(token)
+                for token in (*llm_result.flavor_tokens, *llm_result.hop_tokens)
+                if _normalize_text(token)
+            )
+        )
+        return BeerSearchQuery(
+            raw_text=query_text.strip(),
+            categories=categories,
+            exclude_categories=exclude_categories,
+            max_alc=llm_result.max_alc,
+            min_rating=llm_result.min_rating,
+            tokens=tokens,
+        )
+
+    def _parse_query_with_llm_sync(self, query_text: str) -> _LLMBeerSearchQuery | None:
+        if self._openai_client is None:
+            return None
+
+        response = self._openai_client.responses.parse(
+            model=self._openai_model,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract beer search filters from Russian or English user requests. "
+                        "Return only structured data. Use only these categories when appropriate: "
+                        "New England IPA, IPA, Pastry Sour Ale, Sour Ale, Weizen, Безалкогольное. "
+                        "Put hop names and flavor descriptors into hop_tokens and flavor_tokens. "
+                        "If the user asks for high rating, set min_rating to 4.0 unless a stricter value is given."
+                    ),
+                },
+                {"role": "user", "content": query_text},
+            ],
+            text_format=_LLMBeerSearchQuery,
+        )
+        return response.output_parsed
 
     async def fetch_ranked_entries(self) -> list[BeerEntry]:
         if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
@@ -1122,6 +1224,8 @@ def _entry_matches_query(entry: BeerEntry, query: BeerSearchQuery) -> bool:
     category = categorize_style(entry.style, entry.alc)
     if query.categories and category not in query.categories:
         return False
+    if query.exclude_categories and category in query.exclude_categories:
+        return False
 
     alc_value = _parse_alc_value(entry.alc)
     if query.max_alc is not None and (alc_value is None or alc_value > query.max_alc):
@@ -1141,6 +1245,8 @@ def _entry_search_score(entry: BeerEntry, query: BeerSearchQuery, *, exact: bool
 
     if query.categories:
         score += 3.0 if category in query.categories else (-1.0 if exact else 0.0)
+    if query.exclude_categories and category in query.exclude_categories:
+        score += -4.0 if exact else -2.5
     if query.min_rating is not None:
         score += 2.0 if entry.rating >= query.min_rating else (-1.5 if exact else -0.25)
 
