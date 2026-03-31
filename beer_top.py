@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 import gzip
 import hashlib
+from html import escape
 import json
 import logging
 import math
@@ -44,6 +45,7 @@ class BeerEntry:
     style: str
     rating: float
     rating_count: int
+    alc: str | None = None
 
 
 @dataclass(slots=True)
@@ -53,6 +55,7 @@ class GlideListing:
     style: str | None = None
     untappd_url: str | None = None
     rating_hint: float | None = None
+    alc: str | None = None
 
 
 @dataclass(slots=True)
@@ -399,6 +402,7 @@ def parse_firestore_inventory_rows(rows_json: str) -> list[GlideListing]:
                 style=style,
                 untappd_url=untappd_url,
                 rating_hint=rating_hint,
+                alc=_extract_alc_text(fields),
             )
         )
 
@@ -450,15 +454,23 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
             continue
 
         lines.append("")
-        lines.append(category)
+        lines.append(f"<b><u>{escape(category)}</u></b>")
 
         for beer in beers[:5]:
-            header = beer.name
-            if beer.brewery:
-                header = f"{header} - {beer.brewery}"
+            header = f"• <b>{escape(beer.name)}</b>"
+            brewery = _strip_city_suffix(beer.brewery)
+            if brewery:
+                header = f"{header} - {escape(brewery)}"
+            lines.append(header)
+            if beer.alc:
+                lines.append(f"ALC: {escape(beer.alc)}")
             lines.append(
-                f"{header} | Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings"
+                f"Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings"
             )
+            lines.append("")
+
+        if lines[-1] == "":
+            lines.pop()
 
     return "\n".join(lines)
 
@@ -573,6 +585,7 @@ class BeerTopService:
                         style=listing.style,
                         rating=details.rating,
                         rating_count=details.rating_count,
+                        alc=listing.alc,
                     )
 
                 query = listing.name
@@ -597,6 +610,7 @@ class BeerTopService:
                 style=match.style,
                 rating=details.rating,
                 rating_count=details.rating_count,
+                alc=listing.alc,
             )
 
         results = await asyncio.gather(*(enrich_listing(listing) for listing in listings))
@@ -857,6 +871,30 @@ def _parse_rating_hint(value: object) -> float | None:
         return None
 
 
+def _extract_alc_text(fields: dict[str, object]) -> str | None:
+    known_keys = {
+        "НАЗВАНИЕ",
+        "ПИВОВАРНЯ",
+        "СТИЛЬ",
+        "ДОСТУПНО В БАРЕ",
+        "ОТКРЫТЬ В UNTAPPD",
+        "ОЦЕНКА В UNTAPPD",
+        "UNTAPPD ICON",
+        "ИЗОБРАЖЕНИЕ",
+        "ОПИСАНИЕ",
+        "ЦЕНА",
+        "Объём",
+        "$rowIndex",
+        "$rowVersion",
+    }
+    for key, value in fields.items():
+        if key in known_keys or not isinstance(value, str):
+            continue
+        if re.fullmatch(r"[\d.,]+/[-\d.,]+/[-\d.,]+", value.strip()):
+            return value.strip()
+    return None
+
+
 def _prioritize_direct_untappd_candidates(
     listings: list[GlideListing],
     *,
@@ -900,6 +938,13 @@ def _prioritize_direct_untappd_candidates(
         prioritized.append(listing)
 
     return prioritized
+
+
+def _strip_city_suffix(brewery: str | None) -> str | None:
+    if brewery is None:
+        return None
+    cleaned = re.sub(r"\s*\((?:г\.?|г)\s*[^)]*\)\s*$", "", brewery).strip()
+    return cleaned or None
 
 
 def _clean_text(value: str) -> str:

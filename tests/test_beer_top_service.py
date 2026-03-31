@@ -252,8 +252,9 @@ def test_build_message_returns_text_on_success():
 
     assert message is not None
     assert "Смотри какое интересное пиво я нашел:" in message
-    assert "Pastry Sour Ale" in message
-    assert "Berry Blast Smoothie - Funky Brewery | Untappd 4.18 | 1,248 ratings" in message
+    assert "<b><u>Pastry Sour Ale</u></b>" in message
+    assert "• <b>Berry Blast Smoothie</b> - Funky Brewery" in message
+    assert "Untappd 4.18 | 1,248 ratings" in message
 
 
 def test_build_message_falls_back_to_firestore_inventory_when_glide_html_is_shell_only():
@@ -316,8 +317,9 @@ def test_build_message_falls_back_to_firestore_inventory_when_glide_html_is_shel
     message = asyncio.run(service.build_message())
 
     assert message is not None
-    assert "Pastry Sour Ale" in message
-    assert "Green Jelly - Hop Head | Untappd 4.18 | 1,248 ratings" in message
+    assert "<b><u>Pastry Sour Ale</u></b>" in message
+    assert "• <b>Green Jelly</b> - Hop Head" in message
+    assert "Untappd 4.18 | 1,248 ratings" in message
 
 
 def test_build_message_returns_none_on_total_upstream_failure():

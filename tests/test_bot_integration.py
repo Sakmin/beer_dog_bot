@@ -13,10 +13,10 @@ def load_bot_module(monkeypatch):
 class FakeMessage:
     def __init__(self, chat_type: str) -> None:
         self.chat = SimpleNamespace(id=123, type=chat_type)
-        self.answers: list[str] = []
+        self.answers: list[tuple[str, str | None]] = []
 
-    async def answer(self, text: str) -> None:
-        self.answers.append(text)
+    async def answer(self, text: str, parse_mode: str | None = None) -> None:
+        self.answers.append((text, parse_mode))
 
 
 def test_send_survey_posts_beer_message_after_two_polls(monkeypatch):
@@ -28,8 +28,8 @@ def test_send_survey_posts_beer_message_after_two_polls(monkeypatch):
             calls.append(("poll", kwargs["question"]))
             return SimpleNamespace(message_id=len(calls))
 
-        async def send_message(self, chat_id, text):
-            calls.append(("message", chat_id, text))
+        async def send_message(self, chat_id, text, parse_mode=None):
+            calls.append(("message", chat_id, text, parse_mode))
 
     async def fake_build_message():
         return "Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha"
@@ -47,7 +47,12 @@ def test_send_survey_posts_beer_message_after_two_polls(monkeypatch):
     assert calls == [
         ("poll", "Идем в бар на этой неделе?"),
         ("poll", "Когда тебе удобно?"),
-        ("message", 123, "Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha"),
+        (
+            "message",
+            123,
+            "Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha",
+            "HTML",
+        ),
     ]
 
 
@@ -60,8 +65,8 @@ def test_send_survey_still_sends_two_polls_when_beer_lookup_fails(monkeypatch):
             calls.append(("poll", kwargs["question"]))
             return SimpleNamespace(message_id=len(calls))
 
-        async def send_message(self, chat_id, text):
-            calls.append(("message", chat_id, text))
+        async def send_message(self, chat_id, text, parse_mode=None):
+            calls.append(("message", chat_id, text, parse_mode))
 
     async def fake_build_message():
         raise RuntimeError("upstream failed")
@@ -100,7 +105,9 @@ def test_top_beer_command_sends_recommendation_in_supported_chat_types(monkeypat
 
         asyncio.run(bot_module.cmd_top_beer(message))
 
-        assert message.answers == ["Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha"]
+        assert message.answers == [
+            ("Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha", "HTML")
+        ]
 
 
 def test_top_beer_channel_post_handler_sends_recommendation(monkeypatch):
@@ -119,7 +126,9 @@ def test_top_beer_channel_post_handler_sends_recommendation(monkeypatch):
 
     asyncio.run(bot_module.cmd_top_beer_channel_post(message))
 
-    assert message.answers == ["Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha"]
+    assert message.answers == [
+        ("Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha", "HTML")
+    ]
 
 
 def test_top_beer_command_uses_fallback_when_message_is_unavailable(monkeypatch):
@@ -139,7 +148,7 @@ def test_top_beer_command_uses_fallback_when_message_is_unavailable(monkeypatch)
     asyncio.run(bot_module.cmd_top_beer(message))
 
     assert message.answers == [
-        "Пока не получилось собрать подборку пива. Попробуй чуть позже."
+        ("Пока не получилось собрать подборку пива. Попробуй чуть позже.", None)
     ]
 
 
@@ -160,7 +169,7 @@ def test_top_beer_command_uses_fallback_when_builder_raises(monkeypatch):
     asyncio.run(bot_module.cmd_top_beer(message))
 
     assert message.answers == [
-        "Пока не получилось собрать подборку пива. Попробуй чуть позже."
+        ("Пока не получилось собрать подборку пива. Попробуй чуть позже.", None)
     ]
 
 
@@ -173,8 +182,8 @@ def test_send_survey_keeps_polls_when_beer_message_send_fails(monkeypatch):
             calls.append(("poll", kwargs["question"]))
             return SimpleNamespace(message_id=len(calls))
 
-        async def send_message(self, chat_id, text):
-            calls.append(("message", chat_id, text))
+        async def send_message(self, chat_id, text, parse_mode=None):
+            calls.append(("message", chat_id, text, parse_mode))
             raise RuntimeError("telegram send failed")
 
     async def fake_build_message():
@@ -197,6 +206,7 @@ def test_send_survey_keeps_polls_when_beer_message_send_fails(monkeypatch):
             "message",
             789,
             "Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha",
+            "HTML",
         ),
     ]
     assert bot_module.active_polls[789] == [1, 2]

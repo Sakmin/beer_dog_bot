@@ -39,13 +39,13 @@ def test_format_beer_message_groups_only_non_empty_categories():
     message = format_beer_message(
         {
             "New England IPA": [
-                BeerEntry("Alpha", "Brewery", "IPA - New England / Hazy", 4.12, 1234)
+                BeerEntry("Alpha", "Brewery (г. Москва)", "IPA - New England / Hazy", 4.12, 1234, "5/3/12,5")
             ],
-            "IPA": [BeerEntry("Beta", "Brewery Two", "IPA - American", 4.01, 200)],
+            "IPA": [BeerEntry("Beta", "Brewery Two", "IPA - American", 4.01, 200, "6/40/16")],
             "Sour Ale": [],
             "Pastry Sour Ale": [],
             "Безалкогольное": [
-                BeerEntry("Gamma", None, "Безалкогольное", 3.88, 17)
+                BeerEntry("Gamma", None, "Безалкогольное", 3.88, 17, None)
             ],
         }
     )
@@ -56,14 +56,19 @@ def test_format_beer_message_groups_only_non_empty_categories():
             [
                 "Смотри какое интересное пиво я нашел:",
                 "",
-                "New England IPA",
-                "Alpha - Brewery | Untappd 4.12 | 1,234 ratings",
+                "<b><u>New England IPA</u></b>",
+                "• <b>Alpha</b> - Brewery",
+                "ALC: 5/3/12,5",
+                "Untappd 4.12 | 1,234 ratings",
                 "",
-                "IPA",
-                "Beta - Brewery Two | Untappd 4.01 | 200 ratings",
+                "<b><u>IPA</u></b>",
+                "• <b>Beta</b> - Brewery Two",
+                "ALC: 6/40/16",
+                "Untappd 4.01 | 200 ratings",
                 "",
-                "Безалкогольное",
-                "Gamma | Untappd 3.88 | 17 ratings",
+                "<b><u>Безалкогольное</u></b>",
+                "• <b>Gamma</b>",
+                "Untappd 3.88 | 17 ratings",
             ]
         )
     )

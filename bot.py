@@ -52,7 +52,7 @@ async def send_top_beer_response(message: types.Message):
         await message.answer("Пока не получилось собрать подборку пива. Попробуй чуть позже.")
         return
 
-    await message.answer(text)
+    await message.answer(text, parse_mode="HTML")
 
 
 async def send_survey(chat_id: int):
@@ -90,7 +90,7 @@ async def send_survey(chat_id: int):
     try:
         beer_message = await build_beer_top_message()
         if beer_message:
-            await bot.send_message(chat_id=chat_id, text=beer_message)
+            await bot.send_message(chat_id=chat_id, text=beer_message, parse_mode="HTML")
     except Exception as e:
         print(f"Error sending beer recommendations to chat {chat_id}: {e}")
 
