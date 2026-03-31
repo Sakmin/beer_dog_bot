@@ -27,7 +27,7 @@ CATEGORY_ORDER = (
 )
 
 CATEGORY_EMOJI = {
-    "New England IPA": "🏴",
+    "New England IPA": "🇺🇸",
     "IPA": "🌲",
     "Pastry Sour Ale": "🥧",
     "Sour Ale": "🍓",

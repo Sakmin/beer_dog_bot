@@ -65,7 +65,7 @@ def test_format_beer_message_groups_only_non_empty_categories():
             [
                 "Смотри какое интересное пиво я нашел:",
                 "",
-                "<b>🏴🏴🏴 New England IPA 🏴🏴🏴</b>",
+                "<b>🇺🇸🇺🇸🇺🇸 New England IPA 🇺🇸🇺🇸🇺🇸</b>",
                 "• <b>Alpha</b> (Chinook, Citra, mango) - Brewery",
                 "ALC: 5/3/12,5",
                 "Untappd 4.12 | 1,234 ratings",
