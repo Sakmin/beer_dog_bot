@@ -88,6 +88,7 @@ def test_parse_firestore_inventory_rows_filters_available_beers():
             "ПИВОВАРНЯ": {"stringValue": "Hop Head"},
             "СТИЛЬ": {"stringValue": "Sour - Smoothie / Pastry"},
             "ДОСТУПНО В БАРЕ": {"booleanValue": true},
+            "ОПИСАНИЕ": {"stringValue": "Lime, vanilla, marshmallow"},
             "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/hop-head/green-jelly/1"}
           }
         },
@@ -110,6 +111,7 @@ def test_parse_firestore_inventory_rows_filters_available_beers():
             brewery="Hop Head",
             style="Sour - Smoothie / Pastry",
             untappd_url="https://untappd.com/b/hop-head/green-jelly/1",
+            flavor_notes="Lime, vanilla, marshmallow",
         )
     ]
 
@@ -296,6 +298,7 @@ def test_build_message_falls_back_to_firestore_inventory_when_glide_html_is_shel
                     "ПИВОВАРНЯ": {"stringValue": "Hop Head"},
                     "СТИЛЬ": {"stringValue": "Sour - Smoothie / Pastry"},
                     "ДОСТУПНО В БАРЕ": {"booleanValue": true},
+                    "ОПИСАНИЕ": {"stringValue": "Lime, vanilla, marshmallow"},
                     "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/hop-head/green-jelly/1"}
                   }
                 }
@@ -318,7 +321,7 @@ def test_build_message_falls_back_to_firestore_inventory_when_glide_html_is_shel
 
     assert message is not None
     assert "<b><u>Pastry Sour Ale</u></b>" in message
-    assert "• <b>Green Jelly</b> - Hop Head" in message
+    assert "• <b>Green Jelly</b> (Lime, vanilla, marshmallow) - Hop Head" in message
     assert "Untappd 4.18 | 1,248 ratings" in message
 
 

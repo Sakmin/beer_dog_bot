@@ -46,6 +46,7 @@ class BeerEntry:
     rating: float
     rating_count: int
     alc: str | None = None
+    flavor_notes: str | None = None
 
 
 @dataclass(slots=True)
@@ -56,6 +57,7 @@ class GlideListing:
     untappd_url: str | None = None
     rating_hint: float | None = None
     alc: str | None = None
+    flavor_notes: str | None = None
 
 
 @dataclass(slots=True)
@@ -403,6 +405,7 @@ def parse_firestore_inventory_rows(rows_json: str) -> list[GlideListing]:
                 untappd_url=untappd_url,
                 rating_hint=rating_hint,
                 alc=_extract_alc_text(fields),
+                flavor_notes=_extract_flavor_notes(fields),
             )
         )
 
@@ -458,6 +461,8 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
 
         for beer in beers[:5]:
             header = f"• <b>{escape(beer.name)}</b>"
+            if beer.flavor_notes:
+                header = f"{header} ({escape(beer.flavor_notes)})"
             brewery = _strip_city_suffix(beer.brewery)
             if brewery:
                 header = f"{header} - {escape(brewery)}"
@@ -586,6 +591,7 @@ class BeerTopService:
                         rating=details.rating,
                         rating_count=details.rating_count,
                         alc=listing.alc,
+                        flavor_notes=listing.flavor_notes,
                     )
 
                 query = listing.name
@@ -611,6 +617,7 @@ class BeerTopService:
                 rating=details.rating,
                 rating_count=details.rating_count,
                 alc=listing.alc,
+                flavor_notes=listing.flavor_notes,
             )
 
         results = await asyncio.gather(*(enrich_listing(listing) for listing in listings))
@@ -893,6 +900,18 @@ def _extract_alc_text(fields: dict[str, object]) -> str | None:
         if re.fullmatch(r"[\d.,]+/[-\d.,]+/[-\d.,]+", value.strip()):
             return value.strip()
     return None
+
+
+def _extract_flavor_notes(fields: dict[str, object]) -> str | None:
+    description = fields.get("ОПИСАНИЕ")
+    if not isinstance(description, str):
+        return None
+
+    cleaned = _clean_text(description)
+    if not cleaned:
+        return None
+
+    return cleaned
 
 
 def _prioritize_direct_untappd_candidates(
