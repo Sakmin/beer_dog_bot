@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import BotCommand
+from beer_top import BeerTopService
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +31,28 @@ active_polls = {}
 
 # Store users who have started the bot (for DM reminders)
 bot_users = set()
+
+beer_top_service = BeerTopService()
+
+
+async def build_beer_top_message() -> str | None:
+    """Build the beer recommendation message shared by surveys and /top_beer."""
+    return await beer_top_service.build_message()
+
+
+async def send_top_beer_response(message: types.Message):
+    """Send the beer recommendation text or a short fallback message."""
+    try:
+        text = await build_beer_top_message()
+    except Exception as e:
+        print(f"Error building beer recommendation for chat {message.chat.id}: {e}")
+        text = None
+
+    if text is None:
+        await message.answer("Пока не получилось собрать подборку пива. Попробуй чуть позже.")
+        return
+
+    await message.answer(text)
 
 
 async def send_survey(chat_id: int):
@@ -58,10 +81,18 @@ async def send_survey(chat_id: int):
         
         # Store poll IDs
         active_polls[chat_id] = [poll1.message_id, poll2.message_id]
-        
+
     except Exception as e:
         print(f"Error sending survey to chat {chat_id}: {e}")
         channels.discard(chat_id)
+        return
+
+    try:
+        beer_message = await build_beer_top_message()
+        if beer_message:
+            await bot.send_message(chat_id=chat_id, text=beer_message)
+    except Exception as e:
+        print(f"Error sending beer recommendations to chat {chat_id}: {e}")
 
 
 @dp.poll_answer()
@@ -122,6 +153,18 @@ async def cmd_register(message: types.Message):
     
     channels.add(message.chat.id)
     await message.answer("Канал зарегистрирован для еженедельных опросов!")
+
+
+@dp.message(Command("top_beer"))
+async def cmd_top_beer(message: types.Message):
+    """Send the current beer recommendation without creating polls."""
+    await send_top_beer_response(message)
+
+
+@dp.channel_post(Command("top_beer"))
+async def cmd_top_beer_channel_post(message: types.Message):
+    """Handle /top_beer commands sent as channel posts."""
+    await send_top_beer_response(message)
 
 
 @dp.my_chat_member()
@@ -267,6 +310,7 @@ async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Запустить бота"),
         BotCommand(command="poll", description="Запустить опрос вручную"),
+        BotCommand(command="top_beer", description="Показать подборку пива"),
     ])
     
     # Start the test scheduler
