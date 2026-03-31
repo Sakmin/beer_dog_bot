@@ -457,7 +457,7 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
             continue
 
         lines.append("")
-        lines.append(f"<b><u>{escape(category)}</u></b>")
+        lines.append(f"<b><i>{escape(category)}</i></b>")
 
         for beer in beers[:5]:
             header = f"• <b>{escape(beer.name)}</b>"
