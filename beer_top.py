@@ -536,6 +536,7 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
 def parse_search_query(text: str) -> BeerSearchQuery:
     normalized = _normalize_text(text)
     categories: list[str] = []
+    exclude_categories: list[str] = []
 
     category_aliases = (
         ("New England IPA", ("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa")),
@@ -549,6 +550,20 @@ def parse_search_query(text: str) -> BeerSearchQuery:
     for category, aliases in category_aliases:
         if any(f" {_normalize_text(alias)} " in padded for alias in aliases):
             categories.append(category)
+
+    negative_aliases = (
+        (("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa"), ("New England IPA",)),
+        (("ipa", "american ipa", "west coast ipa"), ("IPA", "New England IPA")),
+        (("pastry sour", "smoothie sour", "pastry"), ("Pastry Sour Ale",)),
+        (("sour ale", "sour", "gose"), ("Sour Ale", "Pastry Sour Ale")),
+        (("weizen", "hefeweizen", "wheat", "witbier", "white ale"), ("Weizen",)),
+        (("безал", "безалкоголь", "non alco", "non alcohol", "non alcoholic"), ("Безалкогольное",)),
+    )
+    for aliases, excluded in negative_aliases:
+        for alias in aliases:
+            normalized_alias = _normalize_text(alias)
+            if re.search(rf"\bне\s+{re.escape(normalized_alias)}\b", normalized):
+                exclude_categories.extend(excluded)
 
     max_alc: float | None = None
     alc_match = re.search(
@@ -587,6 +602,7 @@ def parse_search_query(text: str) -> BeerSearchQuery:
     return BeerSearchQuery(
         raw_text=text.strip(),
         categories=tuple(dict.fromkeys(categories)),
+        exclude_categories=tuple(dict.fromkeys(exclude_categories)),
         max_alc=max_alc,
         min_rating=min_rating,
         tokens=tokens,
@@ -830,6 +846,13 @@ class BeerTopService:
             for entry in entries
         ]
         scored = [item for item in scored if item[1] > 0]
+        allowed_scored = [
+            item
+            for item in scored
+            if categorize_style(item[0].style, item[0].alc) not in query.exclude_categories
+        ]
+        if allowed_scored:
+            scored = allowed_scored
         scored.sort(key=lambda item: (-item[1], -weighted_score(item[0]), item[0].name))
         return [entry for entry, _ in scored[:5]]
 

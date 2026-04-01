@@ -70,3 +70,14 @@ def test_parse_search_query_extracts_filters_and_tokens():
     assert query.max_alc == 7.0
     assert query.min_rating == 4.0
     assert "simcoe" in query.tokens
+
+
+def test_parse_search_query_extracts_negative_category_preferences():
+    query = parse_search_query("хочу что-то сочное, не sour, не ipa")
+
+    assert set(query.exclude_categories) == {
+        "Sour Ale",
+        "Pastry Sour Ale",
+        "IPA",
+        "New England IPA",
+    }
