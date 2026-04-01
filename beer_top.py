@@ -45,6 +45,38 @@ CATEGORY_EMOJI = {
     "Безалкогольное": "🚫",
 }
 
+FLAVOR_HINT_TOKENS = {
+    "клубника",
+    "манго",
+    "малина",
+    "вишня",
+    "черника",
+    "смородина",
+    "банан",
+    "ваниль",
+    "цитрус",
+    "маракуйя",
+    "персик",
+    "ананас",
+    "лайм",
+    "лимон",
+    "базилик",
+    "огурец",
+    "арбуз",
+    "дыня",
+    "tropical",
+    "citrus",
+    "berry",
+    "strawberry",
+    "mango",
+    "raspberry",
+    "peach",
+    "pineapple",
+    "banana",
+    "vanilla",
+    "passionfruit",
+}
+
 LOGGER = logging.getLogger(__name__)
 CHANNEL_URL = "https://t.me/s/beerhounds73"
 UNTAPPD_SEARCH_URL = "https://untappd.com/search?q={query}"
@@ -977,6 +1009,15 @@ class BeerTopService:
             for entry in entries
         ]
         scored = [item for item in scored if item[1] > 0]
+        flavor_tokens = [token for token in query.tokens if token in FLAVOR_HINT_TOKENS]
+        if flavor_tokens:
+            flavor_matched = [
+                item
+                for item in scored
+                if all(token in _entry_search_blob(item[0]) for token in flavor_tokens)
+            ]
+            if flavor_matched:
+                scored = flavor_matched
         if query.categories:
             category_scored = [
                 item

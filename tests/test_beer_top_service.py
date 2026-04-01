@@ -650,6 +650,57 @@ def test_search_message_uses_full_inventory_not_only_ranked_entries():
     assert "Hidden Weizen" in message
 
 
+def test_search_message_prefers_direct_flavor_matches_in_fallback():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Lost Planet: Strawberry & Basil",
+            brewery="Sabotage",
+            style="Sour Ale",
+            rating=4.12,
+            rating_count=4418,
+            alc="4,5/-/12",
+            flavor_notes="клубника, базилик",
+        ),
+        BeerEntry(
+            name="Dosa [Mango + Strawberry]",
+            brewery="4BREWERS",
+            style="Pastry Sour Ale",
+            rating=4.22,
+            rating_count=1574,
+            alc="6/-/16",
+            flavor_notes="манго, клубника",
+        ),
+        BeerEntry(
+            name="Ne Krichi Na Kimchi",
+            brewery="4BREWERS",
+            style="Sour Ale",
+            rating=4.25,
+            rating_count=4210,
+            alc="5/-/-",
+            flavor_notes="соус кимчи",
+        ),
+    ]
+
+    async def fake_parse_user_query(query_text: str):
+        return BeerSearchQuery(
+            raw_text=query_text,
+            max_alc=6.7,
+            tokens=("клубника",),
+        )
+
+    service.load_cached_inventory = lambda: entries
+    service.parse_user_query = fake_parse_user_query
+
+    message = asyncio.run(service.search_message("найди пиво со вкусом клубники меньше 6,7 градусов"))
+
+    assert message is not None
+    assert "Lost Planet: Strawberry &amp; Basil" in message
+    assert "Dosa [Mango + Strawberry]" in message
+    assert "Ne Krichi Na Kimchi" not in message
+
+
 def test_merge_search_queries_prefers_llm_filters_and_keeps_rule_tokens():
     merged = merge_search_queries(
         BeerSearchQuery(
