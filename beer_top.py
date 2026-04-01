@@ -656,6 +656,16 @@ def format_beer_search_message(query: BeerSearchQuery, beers: list[BeerEntry], *
     return "\n".join(lines)
 
 
+def format_no_beer_search_matches(query: BeerSearchQuery) -> str:
+    if query.categories:
+        categories = ", ".join(query.categories)
+        return (
+            f'По запросу "{escape(query.raw_text)}" не нашел подходящих вариантов в наличии. '
+            f"Сейчас нет подходящего пива в категории: {escape(categories)}."
+        )
+    return f'По запросу "{escape(query.raw_text)}" не нашел подходящих вариантов в наличии.'
+
+
 def rank_category_entries(entries: list[BeerEntry]) -> dict[str, list[BeerEntry]]:
     grouped: dict[str, list[BeerEntry]] = {category: [] for category in CATEGORY_ORDER}
 
@@ -744,7 +754,7 @@ class BeerTopService:
 
         closest_matches = self.closest_matches(entries, query)
         if not closest_matches:
-            return None
+            return format_no_beer_search_matches(query)
         reranked = await self.rerank_candidates_with_llm(query.raw_text, closest_matches[:12])
         final_matches = reranked or closest_matches
         return format_beer_search_message(query, final_matches, fallback=True)
@@ -930,6 +940,16 @@ class BeerTopService:
             for entry in entries
         ]
         scored = [item for item in scored if item[1] > 0]
+        if query.categories:
+            category_scored = [
+                item
+                for item in scored
+                if categorize_style(item[0].style, item[0].alc) in query.categories
+            ]
+            if category_scored:
+                scored = category_scored
+            else:
+                return []
         allowed_scored = [
             item
             for item in scored

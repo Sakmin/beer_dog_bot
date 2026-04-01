@@ -492,7 +492,8 @@ def test_search_message_falls_back_to_closest_matches():
 
     assert message is not None
     assert "Точного совпадения по запросу" in message
-    assert "Soft Wheat" in message
+    assert "Poetry of Love" in message
+    assert "Soft Wheat" not in message
 
 
 def test_search_message_fallback_skips_excluded_categories_when_possible():
@@ -548,6 +549,51 @@ def test_search_message_fallback_skips_excluded_categories_when_possible():
     assert message is not None
     assert "Boston Pie" not in message
     assert "Soft Wheat" in message
+
+
+def test_search_message_does_not_fallback_outside_requested_category():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Splurge",
+            brewery="Red Button",
+            style="Pastry Sour Ale",
+            rating=4.39,
+            rating_count=3542,
+            alc="7/-/-",
+            flavor_notes="манго, маракуйя",
+        ),
+        BeerEntry(
+            name="Unbreakfast",
+            brewery="Rewort Brewery",
+            style="Sour Ale",
+            rating=4.26,
+            rating_count=4582,
+            alc="6/10/11,3",
+            flavor_notes="черника, черная смородина",
+        ),
+    ]
+
+    async def fake_fetch_ranked_entries():
+        return entries
+
+    async def fake_parse_user_query(query_text: str):
+        return BeerSearchQuery(
+            raw_text=query_text,
+            categories=("Weizen",),
+            min_rating=4.0,
+        )
+
+    service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.parse_user_query = fake_parse_user_query
+
+    message = asyncio.run(service.search_message("найди weizen с рейтингом выше 4"))
+
+    assert message is not None
+    assert "не нашел подходящих вариантов" in message
+    assert "Weizen" in message
+    assert "Splurge" not in message
 
 
 def test_merge_search_queries_prefers_llm_filters_and_keeps_rule_tokens():
