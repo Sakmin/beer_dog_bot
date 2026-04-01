@@ -112,6 +112,11 @@ class _LLMBeerSearchQuery(BaseModel):
     reasoning_note: str | None = None
 
 
+class _LLMBeerRerankResult(BaseModel):
+    selected_ids: list[int] = Field(default_factory=list)
+    reasoning_note: str | None = None
+
+
 def categorize_style(style: str, alc: str | None = None) -> str | None:
     normalized = style.lower()
 
@@ -536,6 +541,7 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
 def parse_search_query(text: str) -> BeerSearchQuery:
     normalized = _normalize_text(text)
     categories: list[str] = []
+    exclude_categories: list[str] = []
 
     category_aliases = (
         ("New England IPA", ("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa")),
@@ -549,6 +555,20 @@ def parse_search_query(text: str) -> BeerSearchQuery:
     for category, aliases in category_aliases:
         if any(f" {_normalize_text(alias)} " in padded for alias in aliases):
             categories.append(category)
+
+    negative_aliases = (
+        (("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa"), ("New England IPA",)),
+        (("ipa", "american ipa", "west coast ipa"), ("IPA", "New England IPA")),
+        (("pastry sour", "smoothie sour", "pastry"), ("Pastry Sour Ale",)),
+        (("sour ale", "sour", "gose"), ("Sour Ale", "Pastry Sour Ale")),
+        (("weizen", "hefeweizen", "wheat", "witbier", "white ale"), ("Weizen",)),
+        (("безал", "безалкоголь", "non alco", "non alcohol", "non alcoholic"), ("Безалкогольное",)),
+    )
+    for aliases, excluded in negative_aliases:
+        for alias in aliases:
+            normalized_alias = _normalize_text(alias)
+            if re.search(rf"\bне\s+{re.escape(normalized_alias)}\b", normalized):
+                exclude_categories.extend(excluded)
 
     max_alc: float | None = None
     alc_match = re.search(
@@ -587,6 +607,7 @@ def parse_search_query(text: str) -> BeerSearchQuery:
     return BeerSearchQuery(
         raw_text=text.strip(),
         categories=tuple(dict.fromkeys(categories)),
+        exclude_categories=tuple(dict.fromkeys(exclude_categories)),
         max_alc=max_alc,
         min_rating=min_rating,
         tokens=tokens,
@@ -715,12 +736,16 @@ class BeerTopService:
 
         exact_matches = self.search_entries(entries, query)
         if exact_matches:
-            return format_beer_search_message(query, exact_matches, fallback=False)
+            reranked = await self.rerank_candidates_with_llm(query.raw_text, exact_matches[:12])
+            final_matches = reranked or exact_matches
+            return format_beer_search_message(query, final_matches, fallback=False)
 
         closest_matches = self.closest_matches(entries, query)
         if not closest_matches:
             return None
-        return format_beer_search_message(query, closest_matches, fallback=True)
+        reranked = await self.rerank_candidates_with_llm(query.raw_text, closest_matches[:12])
+        final_matches = reranked or closest_matches
+        return format_beer_search_message(query, final_matches, fallback=True)
 
     async def parse_user_query(self, query_text: str) -> BeerSearchQuery:
         parsed = parse_search_query(query_text)
@@ -785,6 +810,79 @@ class BeerTopService:
         )
         return response.output_parsed
 
+    async def rerank_candidates_with_llm(
+        self,
+        query_text: str,
+        candidates: list[BeerEntry],
+    ) -> list[BeerEntry] | None:
+        if self._openai_client is None or not candidates:
+            return None
+
+        try:
+            reranked_ids = await asyncio.to_thread(
+                self._rerank_candidates_with_llm_sync,
+                query_text,
+                candidates,
+            )
+        except Exception as exc:
+            LOGGER.warning("LLM beer rerank failed: %s", exc)
+            return None
+
+        if not reranked_ids:
+            return None
+
+        by_id = {index: entry for index, entry in enumerate(candidates, start=1)}
+        reranked = [by_id[item_id] for item_id in reranked_ids if item_id in by_id]
+        return reranked or None
+
+    def _rerank_candidates_with_llm_sync(
+        self,
+        query_text: str,
+        candidates: list[BeerEntry],
+    ) -> list[int]:
+        candidate_payload = [
+            {
+                "id": index,
+                "name": candidate.name,
+                "brewery": candidate.brewery,
+                "style": candidate.style,
+                "alc": candidate.alc,
+                "rating": candidate.rating,
+                "rating_count": candidate.rating_count,
+                "flavor_notes": candidate.flavor_notes,
+            }
+            for index, candidate in enumerate(candidates, start=1)
+        ]
+        response = self._openai_client.responses.parse(
+            model=self._groq_model,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You rank beer candidates for a user query. "
+                        "Select only from the provided candidates. "
+                        "Prefer candidates that best match the user's vibe and constraints. "
+                        "Return selected_ids ordered best to worst."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "query": query_text,
+                            "candidates": candidate_payload,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            text_format=_LLMBeerRerankResult,
+        )
+        parsed = response.output_parsed
+        if parsed is None:
+            return []
+        return parsed.selected_ids
+
     async def fetch_ranked_entries(self) -> list[BeerEntry]:
         if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
             return self._cache_entries
@@ -830,6 +928,13 @@ class BeerTopService:
             for entry in entries
         ]
         scored = [item for item in scored if item[1] > 0]
+        allowed_scored = [
+            item
+            for item in scored
+            if categorize_style(item[0].style, item[0].alc) not in query.exclude_categories
+        ]
+        if allowed_scored:
+            scored = allowed_scored
         scored.sort(key=lambda item: (-item[1], -weighted_score(item[0]), item[0].name))
         return [entry for entry, _ in scored[:5]]
 

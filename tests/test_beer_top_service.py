@@ -397,7 +397,12 @@ def test_search_message_returns_exact_matches():
     async def fake_fetch_ranked_entries():
         return entries
 
+    async def fake_rerank(query_text: str, candidates):
+        assert query_text == "ne ipa simcoe до 7 градусов с высоким рейтингом"
+        return [candidates[0]]
+
     service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(service.search_message("ne ipa simcoe до 7 градусов с высоким рейтингом"))
 
@@ -434,13 +439,72 @@ def test_search_message_falls_back_to_closest_matches():
     async def fake_fetch_ranked_entries():
         return entries
 
+    async def fake_rerank(query_text: str, candidates):
+        return [candidates[-1], candidates[0]]
+
     service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(service.search_message("ne ipa simcoe до 6 градусов"))
 
     assert message is not None
     assert "Точного совпадения по запросу" in message
-    assert "Poetry of Love" in message
+    assert "Soft Wheat" in message
+
+
+def test_search_message_fallback_skips_excluded_categories_when_possible():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Boston Pie",
+            brewery="Kulinar",
+            style="Sour Ale",
+            rating=4.31,
+            rating_count=2471,
+            alc="6/-/-",
+            flavor_notes="cranberry, biscuit",
+        ),
+        BeerEntry(
+            name="Cowboy Marlboro",
+            brewery="Plan B",
+            style="IPA",
+            rating=3.94,
+            rating_count=9566,
+            alc="6,5/50/16",
+            flavor_notes="pine, citrus",
+        ),
+        BeerEntry(
+            name="Soft Wheat",
+            brewery="Brew Farm",
+            style="Hefeweizen",
+            rating=3.95,
+            rating_count=400,
+            alc="5,1/15/12",
+            flavor_notes="banana, clove",
+        ),
+    ]
+
+    async def fake_fetch_ranked_entries():
+        return entries
+
+    async def fake_parse_user_query(query_text: str):
+        return BeerSearchQuery(
+            raw_text=query_text,
+            max_alc=6.5,
+            min_rating=4.0,
+            tokens=("juicy", "aromatic"),
+            exclude_categories=("Sour Ale", "Pastry Sour Ale"),
+        )
+
+    service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.parse_user_query = fake_parse_user_query
+
+    message = asyncio.run(service.search_message("не sour"))
+
+    assert message is not None
+    assert "Boston Pie" not in message
+    assert "Soft Wheat" in message
 
 
 def test_merge_search_queries_prefers_llm_filters_and_keeps_rule_tokens():
