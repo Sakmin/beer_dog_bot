@@ -45,6 +45,11 @@ async def build_beer_search_message(query_text: str) -> str | None:
     return await beer_top_service.search_message(query_text)
 
 
+async def refresh_beer_cache() -> int:
+    """Refresh the persisted beer inventory cache from live sources."""
+    return await beer_top_service.refresh_cache()
+
+
 async def send_top_beer_response(message: types.Message):
     """Send the beer recommendation text or a short fallback message."""
     try:
@@ -54,7 +59,7 @@ async def send_top_beer_response(message: types.Message):
         text = None
 
     if text is None:
-        await message.answer("Пока не получилось собрать подборку пива. Попробуй чуть позже.")
+        await message.answer("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.")
         return
 
     await message.answer(text, parse_mode="HTML")
@@ -75,10 +80,21 @@ async def send_search_beer_response(message: types.Message):
         text = None
 
     if text is None:
-        await message.answer("Пока не получилось подобрать пиво. Попробуй чуть позже.")
+        await message.answer("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.")
         return
 
     await message.answer(text, parse_mode="HTML")
+
+
+async def send_refresh_beer_cache_response(message: types.Message):
+    try:
+        count = await refresh_beer_cache()
+    except Exception as e:
+        print(f"Error refreshing beer cache for chat {message.chat.id}: {e}")
+        await message.answer("Не получилось обновить кэш пива. Попробуй чуть позже.")
+        return
+
+    await message.answer(f"Кэш пива обновлен. Сохранено позиций: {count}.")
 
 
 async def send_survey(chat_id: int):
@@ -197,6 +213,12 @@ async def cmd_top_beer_channel_post(message: types.Message):
 async def cmd_search_beer(message: types.Message):
     """Search currently available beer by a free-form query."""
     await send_search_beer_response(message)
+
+
+@dp.message(Command("refresh_beer_cache"))
+async def cmd_refresh_beer_cache(message: types.Message):
+    """Refresh local beer inventory cache from live sources."""
+    await send_refresh_beer_cache_response(message)
 
 
 @dp.my_chat_member()
@@ -344,6 +366,7 @@ async def main():
         BotCommand(command="poll", description="Запустить опрос вручную"),
         BotCommand(command="top_beer", description="Показать подборку пива"),
         BotCommand(command="search_beer", description="Подобрать пиво по запросу"),
+        BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
     ])
     
     # Start the test scheduler

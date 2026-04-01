@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import json
 
 from beer_top import (
     BeerTopService,
@@ -255,108 +256,6 @@ def test_select_best_untappd_match_rejects_partial_overlap_wrong_brewery_candida
     assert select_best_untappd_match(listing, results) is None
 
 
-def test_build_message_returns_text_on_success():
-    service = BeerTopService()
-
-    async def fake_channel_html() -> str:
-        return """
-        <div class="tgme_widget_message_wrap">
-          <a href="https://go.glideapps.com/play/current">Current list</a>
-        </div>
-        """
-
-    async def fake_glide_html(url: str) -> str:
-        assert url == "https://go.glideapps.com/play/current"
-        return (FIXTURES / "glide_listing_sample.html").read_text()
-
-    async def fake_untappd_search_html(query: str) -> str:
-        assert "Berry Blast Smoothie" in query
-        return (FIXTURES / "untappd_search_sample.html").read_text()
-
-    async def fake_untappd_beer_page_html(url: str) -> str:
-        assert url == "https://untappd.com/b/funky-brewery/berry-blast-smoothie/12345"
-        return (FIXTURES / "untappd_beer_page_sample.html").read_text()
-
-    service.fetch_channel_html = fake_channel_html
-    service.fetch_glide_html = fake_glide_html
-    service.fetch_untappd_search_html = fake_untappd_search_html
-    service.fetch_untappd_beer_page_html = fake_untappd_beer_page_html
-
-    message = asyncio.run(service.build_message())
-
-    assert message is not None
-    assert "Смотри какое интересное пиво я нашел:" in message
-    assert "<b>🥧🥧🥧 Pastry Sour Ale 🥧🥧🥧</b>" in message
-    assert "• <b>Berry Blast Smoothie</b> - Funky Brewery" in message
-    assert "Untappd 4.18 | 1,248 ratings" in message
-
-
-def test_build_message_falls_back_to_firestore_inventory_when_glide_html_is_shell_only():
-    service = BeerTopService()
-
-    async def fake_channel_html() -> str:
-        return """
-        <div class="tgme_widget_message_wrap">
-          <a href="https://go.glideapps.com/play/X56sGynCgXQC4bzpzWIm">Current list</a>
-        </div>
-        """
-
-    async def fake_glide_html(url: str) -> str:
-        assert url == "https://go.glideapps.com/play/X56sGynCgXQC4bzpzWIm"
-        return "<html><body><div id='root'></div></body></html>"
-
-    async def fake_published_data_document(app_id: str) -> str:
-        assert app_id == "X56sGynCgXQC4bzpzWIm"
-        return """
-        {
-          "fields": {
-            "schema": {
-              "stringValue": "{\\"tables\\":[{\\"name\\":{\\"isSpecial\\":false,\\"name\\":\\"50c867b5-a28d-45b0-9f39-3775b2c42586\\"},\\"columns\\":[{\\"name\\":\\"ПИВОВАРНЯ\\"},{\\"name\\":\\"НАЗВАНИЕ\\"},{\\"name\\":\\"СТИЛЬ\\"},{\\"name\\":\\"ДОСТУПНО В БАРЕ\\"}]}]}"
-            }
-          }
-        }
-        """
-
-    async def fake_table_rows(app_id: str, table_doc_id: str) -> list[str]:
-        assert app_id == "X56sGynCgXQC4bzpzWIm"
-        assert table_doc_id == "_50c867b5-a28d-45b0-9f39-3775b2c42586"
-        return [
-            """
-            {
-              "documents": [
-                {
-                  "fields": {
-                    "НАЗВАНИЕ": {"stringValue": "Green Jelly"},
-                    "ПИВОВАРНЯ": {"stringValue": "Hop Head"},
-                    "СТИЛЬ": {"stringValue": "Sour - Smoothie / Pastry"},
-                    "ДОСТУПНО В БАРЕ": {"booleanValue": true},
-                    "ОПИСАНИЕ": {"stringValue": "Lime, vanilla, marshmallow"},
-                    "ОТКРЫТЬ В UNTAPPD": {"stringValue": "https://untappd.com/b/hop-head/green-jelly/1"}
-                  }
-                }
-              ]
-            }
-            """
-        ]
-
-    async def fake_untappd_beer_page_html(url: str) -> str:
-        assert url == "https://untappd.com/b/hop-head/green-jelly/1"
-        return (FIXTURES / "untappd_beer_page_sample.html").read_text()
-
-    service.fetch_channel_html = fake_channel_html
-    service.fetch_glide_html = fake_glide_html
-    service.fetch_published_data_document = fake_published_data_document
-    service.fetch_table_rows_pages = fake_table_rows
-    service.fetch_untappd_beer_page_html = fake_untappd_beer_page_html
-
-    message = asyncio.run(service.build_message())
-
-    assert message is not None
-    assert "<b>🥧🥧🥧 Pastry Sour Ale 🥧🥧🥧</b>" in message
-    assert "• <b>Green Jelly</b> (Lime, vanilla, marshmallow) - Hop Head" in message
-    assert "Untappd 4.18 | 1,248 ratings" in message
-
-
 def test_build_message_returns_none_on_total_upstream_failure():
     service = BeerTopService()
 
@@ -368,6 +267,66 @@ def test_build_message_returns_none_on_total_upstream_failure():
     message = asyncio.run(service.build_message())
 
     assert message is None
+
+
+def test_build_message_reads_from_cache_file(tmp_path):
+    cache_path = tmp_path / "beer_inventory_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "refreshed_at": "2026-04-01T12:00:00+00:00",
+                "source_glide_url": "https://go.glideapps.com/play/current",
+                "entries": [
+                    {
+                        "name": "Poetry of Love",
+                        "brewery": "Rewort Brewery",
+                        "style": "New England IPA",
+                        "rating": 4.18,
+                        "rating_count": 1800,
+                        "alc": "6,9/30/16",
+                        "flavor_notes": "Simcoe, mandarin",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = BeerTopService(cache_path=cache_path)
+
+    message = asyncio.run(service.build_message())
+
+    assert message is not None
+    assert "Poetry of Love" in message
+
+
+def test_refresh_cache_writes_entries_to_disk(tmp_path):
+    cache_path = tmp_path / "beer_inventory_cache.json"
+    service = BeerTopService(cache_path=cache_path)
+
+    entries = [
+        BeerEntry(
+            name="Poetry of Love",
+            brewery="Rewort Brewery",
+            style="New England IPA",
+            rating=4.18,
+            rating_count=1800,
+            alc="6,9/30/16",
+            flavor_notes="Simcoe, mandarin",
+        )
+    ]
+
+    async def fake_fetch_live_entries():
+        return entries, "https://go.glideapps.com/play/current"
+
+    service.fetch_live_entries = fake_fetch_live_entries
+
+    count = asyncio.run(service.refresh_cache())
+
+    assert count == 1
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["source_glide_url"] == "https://go.glideapps.com/play/current"
+    assert payload["entries"][0]["name"] == "Poetry of Love"
 
 
 def test_search_message_returns_exact_matches():
@@ -394,14 +353,12 @@ def test_search_message_returns_exact_matches():
         ),
     ]
 
-    async def fake_fetch_ranked_entries():
-        return entries
+    service.load_cached_entries = lambda: entries
 
     async def fake_rerank(query_text: str, candidates):
         assert query_text == "ne ipa simcoe до 7 градусов с высоким рейтингом"
         return [candidates[0]]
 
-    service.fetch_ranked_entries = fake_fetch_ranked_entries
     service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(service.search_message("ne ipa simcoe до 7 градусов с высоким рейтингом"))
@@ -436,13 +393,11 @@ def test_search_message_handles_russian_threshold_query_without_fallback():
         ),
     ]
 
-    async def fake_fetch_ranked_entries():
-        return entries
+    service.load_cached_entries = lambda: entries
 
     async def fake_rerank(query_text: str, candidates):
         return candidates
 
-    service.fetch_ranked_entries = fake_fetch_ranked_entries
     service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(
@@ -479,13 +434,11 @@ def test_search_message_falls_back_to_closest_matches():
         ),
     ]
 
-    async def fake_fetch_ranked_entries():
-        return entries
+    service.load_cached_entries = lambda: entries
 
     async def fake_rerank(query_text: str, candidates):
         return [candidates[-1], candidates[0]]
 
-    service.fetch_ranked_entries = fake_fetch_ranked_entries
     service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(service.search_message("ne ipa simcoe до 6 градусов"))
@@ -529,9 +482,6 @@ def test_search_message_fallback_skips_excluded_categories_when_possible():
         ),
     ]
 
-    async def fake_fetch_ranked_entries():
-        return entries
-
     async def fake_parse_user_query(query_text: str):
         return BeerSearchQuery(
             raw_text=query_text,
@@ -541,7 +491,7 @@ def test_search_message_fallback_skips_excluded_categories_when_possible():
             exclude_categories=("Sour Ale", "Pastry Sour Ale"),
         )
 
-    service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.load_cached_entries = lambda: entries
     service.parse_user_query = fake_parse_user_query
 
     message = asyncio.run(service.search_message("не sour"))
@@ -575,9 +525,6 @@ def test_search_message_does_not_fallback_outside_requested_category():
         ),
     ]
 
-    async def fake_fetch_ranked_entries():
-        return entries
-
     async def fake_parse_user_query(query_text: str):
         return BeerSearchQuery(
             raw_text=query_text,
@@ -585,7 +532,7 @@ def test_search_message_does_not_fallback_outside_requested_category():
             min_rating=4.0,
         )
 
-    service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.load_cached_entries = lambda: entries
     service.parse_user_query = fake_parse_user_query
 
     message = asyncio.run(service.search_message("найди weizen с рейтингом выше 4"))
@@ -639,81 +586,29 @@ def test_parse_user_query_merges_llm_result_when_available():
     assert "juicy" in query.tokens
 
 
-def test_build_message_uses_cached_result_for_repeated_requests():
+def test_build_message_uses_memory_cache_for_repeated_requests():
     service = BeerTopService()
-    calls = {
-        "channel": 0,
-        "glide": 0,
-        "search": 0,
-        "page": 0,
-    }
+    calls = {"load": 0}
+    entries = [
+        BeerEntry(
+            name="Poetry of Love",
+            brewery="Rewort Brewery",
+            style="New England IPA",
+            rating=4.18,
+            rating_count=1800,
+            alc="6,9/30/16",
+            flavor_notes="Simcoe, mandarin",
+        )
+    ]
 
-    async def fake_channel_html() -> str:
-        calls["channel"] += 1
-        return """
-        <div class="tgme_widget_message_wrap">
-          <a href="https://go.glideapps.com/play/current">Current list</a>
-        </div>
-        """
+    def fake_load_cached_entries():
+        calls["load"] += 1
+        return entries
 
-    async def fake_glide_html(url: str) -> str:
-        calls["glide"] += 1
-        return (FIXTURES / "glide_listing_sample.html").read_text()
-
-    async def fake_untappd_search_html(query: str) -> str:
-        calls["search"] += 1
-        return (FIXTURES / "untappd_search_sample.html").read_text()
-
-    async def fake_untappd_beer_page_html(url: str) -> str:
-        calls["page"] += 1
-        return (FIXTURES / "untappd_beer_page_sample.html").read_text()
-
-    service.fetch_channel_html = fake_channel_html
-    service.fetch_glide_html = fake_glide_html
-    service.fetch_untappd_search_html = fake_untappd_search_html
-    service.fetch_untappd_beer_page_html = fake_untappd_beer_page_html
+    service.load_cached_entries = fake_load_cached_entries
 
     first = asyncio.run(service.build_message())
     second = asyncio.run(service.build_message())
 
     assert first == second
-    assert calls == {
-        "channel": 1,
-        "glide": 1,
-        "search": 1,
-        "page": 1,
-    }
-
-
-def test_build_message_returns_stale_cache_when_refresh_fails_after_expiry():
-    service = BeerTopService()
-    service._cache_text = "cached beer message"
-    service._cache_until = datetime.now(UTC) - timedelta(seconds=1)
-
-    async def broken_fetch() -> str:
-        raise RuntimeError("network down")
-
-    service.fetch_channel_html = broken_fetch
-
-    message = asyncio.run(service.build_message())
-
-    assert message == "cached beer message"
-
-
-def test_build_message_returns_none_for_successful_empty_refresh_after_expiry():
-    service = BeerTopService()
-    service._cache_text = "cached beer message"
-    service._cache_until = datetime.now(UTC) - timedelta(seconds=1)
-
-    async def fake_channel_html() -> str:
-        return """
-        <div class="tgme_widget_message_wrap">
-          <div class="tgme_widget_message_text">No current Glide link here</div>
-        </div>
-        """
-
-    service.fetch_channel_html = fake_channel_html
-
-    message = asyncio.run(service.build_message())
-
-    assert message is None
+    assert calls == {"load": 1}

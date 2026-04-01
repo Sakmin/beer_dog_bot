@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
@@ -11,6 +12,7 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
 import re
 from html import unescape
 from html.parser import HTMLParser
@@ -54,6 +56,8 @@ GLIDE_TABLE_ROWS_URL = (
     "https://firestore.googleapis.com/v1/projects/glide-prod/"
     "databases/(default)/documents/glide-apps-v4-data/{app_id}/tables/{table_doc_id}/rows"
 )
+CACHE_PATH = Path("data/beer_inventory_cache.json")
+MAX_CACHE_BYTES = 500 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -699,9 +703,13 @@ class BeerTopService:
         *,
         cache_ttl: timedelta = timedelta(hours=6),
         request_timeout: float = 15.0,
+        cache_path: Path | None = None,
+        max_cache_bytes: int = MAX_CACHE_BYTES,
     ) -> None:
         self._cache_ttl = cache_ttl
         self._request_timeout = request_timeout
+        self._cache_path = cache_path or CACHE_PATH
+        self._max_cache_bytes = max_cache_bytes
         self._cache_text: str | None = None
         self._cache_until: datetime | None = None
         self._cache_entries: list[BeerEntry] | None = None
@@ -717,14 +725,7 @@ class BeerTopService:
         if self._cache_text and self._cache_until and datetime.now(UTC) < self._cache_until:
             return self._cache_text
 
-        stale_cache = self._cache_text
-
-        try:
-            entries = await self.fetch_ranked_entries()
-        except Exception:
-            LOGGER.exception("Beer top refresh failed")
-            return stale_cache
-
+        entries = self.load_cached_entries()
         if not entries:
             return None
 
@@ -742,7 +743,7 @@ class BeerTopService:
         if not query.raw_text:
             return None
 
-        entries = await self.fetch_ranked_entries()
+        entries = self.load_cached_entries()
         if not entries:
             return None
 
@@ -899,10 +900,39 @@ class BeerTopService:
         if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
             return self._cache_entries
 
+        payload = self._load_cache_payload()
+        if payload is None:
+            return []
+        entries = self._deserialize_entries(payload.get("entries"))
+        self._cache_entries = entries
+        self._cache_until = datetime.now(UTC) + self._cache_ttl
+        return entries
+
+    async def refresh_cache(self) -> int:
+        entries, glide_url = await self.fetch_live_entries()
+        self._write_cache(entries, glide_url)
+        self._cache_entries = entries
+        self._cache_text = None
+        self._cache_until = datetime.now(UTC) + self._cache_ttl
+        return len(entries)
+
+    def load_cached_entries(self) -> list[BeerEntry]:
+        if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
+            return self._cache_entries
+
+        payload = self._load_cache_payload()
+        if payload is None:
+            return []
+        entries = self._deserialize_entries(payload.get("entries"))
+        self._cache_entries = entries
+        self._cache_until = datetime.now(UTC) + self._cache_ttl
+        return entries
+
+    async def fetch_live_entries(self) -> tuple[list[BeerEntry], str | None]:
         channel_html = await self.fetch_channel_html()
         glide_url = extract_latest_glide_url(channel_html)
         if not glide_url:
-            return []
+            return [], None
 
         glide_html = await self.fetch_glide_html(glide_url)
         listings = parse_glide_listings(glide_html)
@@ -911,12 +941,10 @@ class BeerTopService:
             if app_id:
                 listings = await self.fetch_firestore_inventory(app_id)
         if not listings:
-            return []
+            return [], glide_url
 
         entries = await self.resolve_untappd_matches(listings)
-        self._cache_entries = entries
-        self._cache_until = datetime.now(UTC) + self._cache_ttl
-        return entries
+        return entries, glide_url
 
     def search_entries(self, entries: list[BeerEntry], query: BeerSearchQuery) -> list[BeerEntry]:
         matches: list[BeerEntry] = []
@@ -1073,6 +1101,57 @@ class BeerTopService:
         with urlopen(request, timeout=self._request_timeout) as response:
             charset = response.headers.get_content_charset() or "utf-8"
             return response.read().decode(charset, errors="replace")
+
+    def _load_cache_payload(self) -> dict[str, object] | None:
+        if not self._cache_path.exists():
+            return None
+        try:
+            payload = json.loads(self._cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            LOGGER.warning("Failed to read beer cache: %s", exc)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _deserialize_entries(self, raw_entries: object) -> list[BeerEntry]:
+        if not isinstance(raw_entries, list):
+            return []
+        entries: list[BeerEntry] = []
+        for item in raw_entries:
+            if not isinstance(item, dict):
+                continue
+            try:
+                entries.append(
+                    BeerEntry(
+                        name=str(item["name"]),
+                        brewery=item.get("brewery"),
+                        style=str(item["style"]),
+                        rating=float(item["rating"]),
+                        rating_count=int(item["rating_count"]),
+                        alc=item.get("alc"),
+                        flavor_notes=item.get("flavor_notes"),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return entries
+
+    def _write_cache(self, entries: list[BeerEntry], glide_url: str | None) -> None:
+        payload = {
+            "refreshed_at": datetime.now(UTC).isoformat(),
+            "source_glide_url": glide_url,
+            "entries": [asdict(entry) for entry in entries],
+        }
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+        encoded = serialized.encode("utf-8")
+        if len(encoded) > self._max_cache_bytes:
+            raise ValueError("Beer cache exceeds configured size limit")
+
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self._cache_path.with_suffix(".tmp")
+        temp_path.write_bytes(encoded)
+        temp_path.replace(self._cache_path)
 
 
 def select_best_untappd_match(
