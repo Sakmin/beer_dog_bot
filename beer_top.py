@@ -69,6 +69,8 @@ class BeerEntry:
     rating_count: int
     alc: str | None = None
     flavor_notes: str | None = None
+    untappd_url: str | None = None
+    rating_available: bool = True
 
 
 @dataclass(slots=True)
@@ -743,7 +745,7 @@ class BeerTopService:
         if not query.raw_text:
             return None
 
-        entries = self.load_cached_entries()
+        entries = self.load_cached_inventory()
         if not entries:
             return None
 
@@ -918,15 +920,22 @@ class BeerTopService:
 
     def load_cached_entries(self) -> list[BeerEntry]:
         if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
-            return self._cache_entries
+            return [entry for entry in self._cache_entries if entry.rating_available]
 
         payload = self._load_cache_payload()
         if payload is None:
             return []
-        entries = self._deserialize_entries(payload.get("entries"))
+        entries = self._deserialize_entries(payload.get("ranked_entries"))
         self._cache_entries = entries
         self._cache_until = datetime.now(UTC) + self._cache_ttl
         return entries
+
+    def load_cached_inventory(self) -> list[BeerEntry]:
+        payload = self._load_cache_payload()
+        if payload is None:
+            return []
+        inventory = self._deserialize_entries(payload.get("inventory"))
+        return inventory
 
     async def fetch_live_entries(self) -> tuple[list[BeerEntry], str | None]:
         channel_html = await self.fetch_channel_html()
@@ -1023,6 +1032,8 @@ class BeerTopService:
                         rating_count=details.rating_count,
                         alc=listing.alc,
                         flavor_notes=listing.flavor_notes,
+                        untappd_url=listing.untappd_url,
+                        rating_available=True,
                     )
 
                 query = listing.name
@@ -1039,7 +1050,19 @@ class BeerTopService:
                 details = parse_untappd_beer_page(page_html)
             except Exception as exc:
                 LOGGER.warning("Beer enrichment failed for %s: %s", listing.name, exc)
-                return None
+                if listing.style is None:
+                    return None
+                return BeerEntry(
+                    name=listing.name,
+                    brewery=listing.brewery,
+                    style=listing.style,
+                    rating=float(listing.rating_hint or 0.0),
+                    rating_count=0,
+                    alc=listing.alc,
+                    flavor_notes=listing.flavor_notes,
+                    untappd_url=listing.untappd_url,
+                    rating_available=False,
+                )
 
             return BeerEntry(
                 name=match.name,
@@ -1049,6 +1072,8 @@ class BeerTopService:
                 rating_count=details.rating_count,
                 alc=listing.alc,
                 flavor_notes=listing.flavor_notes,
+                untappd_url=match.url,
+                rating_available=True,
             )
 
         results = await asyncio.gather(*(enrich_listing(listing) for listing in listings))
@@ -1131,6 +1156,8 @@ class BeerTopService:
                         rating_count=int(item["rating_count"]),
                         alc=item.get("alc"),
                         flavor_notes=item.get("flavor_notes"),
+                        untappd_url=item.get("untappd_url"),
+                        rating_available=bool(item.get("rating_available", True)),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -1141,7 +1168,8 @@ class BeerTopService:
         payload = {
             "refreshed_at": datetime.now(UTC).isoformat(),
             "source_glide_url": glide_url,
-            "entries": [asdict(entry) for entry in entries],
+            "inventory": [asdict(entry) for entry in entries],
+            "ranked_entries": [asdict(entry) for entry in entries if entry.rating_available],
         }
         serialized = json.dumps(payload, ensure_ascii=False, indent=2)
         encoded = serialized.encode("utf-8")
