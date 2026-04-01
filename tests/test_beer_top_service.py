@@ -276,7 +276,7 @@ def test_build_message_reads_from_cache_file(tmp_path):
             {
                 "refreshed_at": "2026-04-01T12:00:00+00:00",
                 "source_glide_url": "https://go.glideapps.com/play/current",
-                "entries": [
+                "inventory": [
                     {
                         "name": "Poetry of Love",
                         "brewery": "Rewort Brewery",
@@ -285,6 +285,21 @@ def test_build_message_reads_from_cache_file(tmp_path):
                         "rating_count": 1800,
                         "alc": "6,9/30/16",
                         "flavor_notes": "Simcoe, mandarin",
+                        "untappd_url": None,
+                        "rating_available": True,
+                    }
+                ],
+                "ranked_entries": [
+                    {
+                        "name": "Poetry of Love",
+                        "brewery": "Rewort Brewery",
+                        "style": "New England IPA",
+                        "rating": 4.18,
+                        "rating_count": 1800,
+                        "alc": "6,9/30/16",
+                        "flavor_notes": "Simcoe, mandarin",
+                        "untappd_url": None,
+                        "rating_available": True,
                     }
                 ],
             },
@@ -313,7 +328,18 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
             rating_count=1800,
             alc="6,9/30/16",
             flavor_notes="Simcoe, mandarin",
-        )
+            rating_available=True,
+        ),
+        BeerEntry(
+            name="Unknown Draft",
+            brewery="Mystery Brew",
+            style="IPA",
+            rating=0.0,
+            rating_count=0,
+            alc="6,5/20/12",
+            flavor_notes="resin, citrus",
+            rating_available=False,
+        ),
     ]
 
     async def fake_fetch_live_entries():
@@ -323,10 +349,12 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
 
     count = asyncio.run(service.refresh_cache())
 
-    assert count == 1
+    assert count == 2
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert payload["source_glide_url"] == "https://go.glideapps.com/play/current"
-    assert payload["entries"][0]["name"] == "Poetry of Love"
+    assert payload["inventory"][0]["name"] == "Poetry of Love"
+    assert len(payload["inventory"]) == 2
+    assert len(payload["ranked_entries"]) == 1
 
 
 def test_search_message_returns_exact_matches():
@@ -353,7 +381,7 @@ def test_search_message_returns_exact_matches():
         ),
     ]
 
-    service.load_cached_entries = lambda: entries
+    service.load_cached_inventory = lambda: entries
 
     async def fake_rerank(query_text: str, candidates):
         assert query_text == "ne ipa simcoe до 7 градусов с высоким рейтингом"
@@ -393,7 +421,7 @@ def test_search_message_handles_russian_threshold_query_without_fallback():
         ),
     ]
 
-    service.load_cached_entries = lambda: entries
+    service.load_cached_inventory = lambda: entries
 
     async def fake_rerank(query_text: str, candidates):
         return candidates
@@ -434,7 +462,7 @@ def test_search_message_falls_back_to_closest_matches():
         ),
     ]
 
-    service.load_cached_entries = lambda: entries
+    service.load_cached_inventory = lambda: entries
 
     async def fake_rerank(query_text: str, candidates):
         return [candidates[-1], candidates[0]]
@@ -491,7 +519,7 @@ def test_search_message_fallback_skips_excluded_categories_when_possible():
             exclude_categories=("Sour Ale", "Pastry Sour Ale"),
         )
 
-    service.load_cached_entries = lambda: entries
+    service.load_cached_inventory = lambda: entries
     service.parse_user_query = fake_parse_user_query
 
     message = asyncio.run(service.search_message("не sour"))
@@ -532,7 +560,7 @@ def test_search_message_does_not_fallback_outside_requested_category():
             min_rating=4.0,
         )
 
-    service.load_cached_entries = lambda: entries
+    service.load_cached_inventory = lambda: entries
     service.parse_user_query = fake_parse_user_query
 
     message = asyncio.run(service.search_message("найди weizen с рейтингом выше 4"))
@@ -541,6 +569,37 @@ def test_search_message_does_not_fallback_outside_requested_category():
     assert "не нашел подходящих вариантов" in message
     assert "Weizen" in message
     assert "Splurge" not in message
+
+
+def test_search_message_uses_full_inventory_not_only_ranked_entries():
+    service = BeerTopService()
+
+    inventory = [
+        BeerEntry(
+            name="Hidden Weizen",
+            brewery="Brew Farm",
+            style="Hefeweizen",
+            rating=0.0,
+            rating_count=0,
+            alc="5,1/15/12",
+            flavor_notes="banana, clove",
+            rating_available=False,
+        )
+    ]
+
+    async def fake_parse_user_query(query_text: str):
+        return BeerSearchQuery(
+            raw_text=query_text,
+            categories=("Weizen",),
+        )
+
+    service.load_cached_inventory = lambda: inventory
+    service.parse_user_query = fake_parse_user_query
+
+    message = asyncio.run(service.search_message("найди weizen"))
+
+    assert message is not None
+    assert "Hidden Weizen" in message
 
 
 def test_merge_search_queries_prefers_llm_filters_and_keeps_rule_tokens():
