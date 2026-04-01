@@ -397,7 +397,12 @@ def test_search_message_returns_exact_matches():
     async def fake_fetch_ranked_entries():
         return entries
 
+    async def fake_rerank(query_text: str, candidates):
+        assert query_text == "ne ipa simcoe до 7 градусов с высоким рейтингом"
+        return [candidates[0]]
+
     service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(service.search_message("ne ipa simcoe до 7 градусов с высоким рейтингом"))
 
@@ -434,13 +439,17 @@ def test_search_message_falls_back_to_closest_matches():
     async def fake_fetch_ranked_entries():
         return entries
 
+    async def fake_rerank(query_text: str, candidates):
+        return [candidates[-1], candidates[0]]
+
     service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.rerank_candidates_with_llm = fake_rerank
 
     message = asyncio.run(service.search_message("ne ipa simcoe до 6 градусов"))
 
     assert message is not None
     assert "Точного совпадения по запросу" in message
-    assert "Poetry of Love" in message
+    assert "Soft Wheat" in message
 
 
 def test_search_message_fallback_skips_excluded_categories_when_possible():

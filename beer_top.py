@@ -112,6 +112,11 @@ class _LLMBeerSearchQuery(BaseModel):
     reasoning_note: str | None = None
 
 
+class _LLMBeerRerankResult(BaseModel):
+    selected_ids: list[int] = Field(default_factory=list)
+    reasoning_note: str | None = None
+
+
 def categorize_style(style: str, alc: str | None = None) -> str | None:
     normalized = style.lower()
 
@@ -731,12 +736,16 @@ class BeerTopService:
 
         exact_matches = self.search_entries(entries, query)
         if exact_matches:
-            return format_beer_search_message(query, exact_matches, fallback=False)
+            reranked = await self.rerank_candidates_with_llm(query.raw_text, exact_matches[:12])
+            final_matches = reranked or exact_matches
+            return format_beer_search_message(query, final_matches, fallback=False)
 
         closest_matches = self.closest_matches(entries, query)
         if not closest_matches:
             return None
-        return format_beer_search_message(query, closest_matches, fallback=True)
+        reranked = await self.rerank_candidates_with_llm(query.raw_text, closest_matches[:12])
+        final_matches = reranked or closest_matches
+        return format_beer_search_message(query, final_matches, fallback=True)
 
     async def parse_user_query(self, query_text: str) -> BeerSearchQuery:
         parsed = parse_search_query(query_text)
@@ -800,6 +809,79 @@ class BeerTopService:
             text_format=_LLMBeerSearchQuery,
         )
         return response.output_parsed
+
+    async def rerank_candidates_with_llm(
+        self,
+        query_text: str,
+        candidates: list[BeerEntry],
+    ) -> list[BeerEntry] | None:
+        if self._openai_client is None or not candidates:
+            return None
+
+        try:
+            reranked_ids = await asyncio.to_thread(
+                self._rerank_candidates_with_llm_sync,
+                query_text,
+                candidates,
+            )
+        except Exception as exc:
+            LOGGER.warning("LLM beer rerank failed: %s", exc)
+            return None
+
+        if not reranked_ids:
+            return None
+
+        by_id = {index: entry for index, entry in enumerate(candidates, start=1)}
+        reranked = [by_id[item_id] for item_id in reranked_ids if item_id in by_id]
+        return reranked or None
+
+    def _rerank_candidates_with_llm_sync(
+        self,
+        query_text: str,
+        candidates: list[BeerEntry],
+    ) -> list[int]:
+        candidate_payload = [
+            {
+                "id": index,
+                "name": candidate.name,
+                "brewery": candidate.brewery,
+                "style": candidate.style,
+                "alc": candidate.alc,
+                "rating": candidate.rating,
+                "rating_count": candidate.rating_count,
+                "flavor_notes": candidate.flavor_notes,
+            }
+            for index, candidate in enumerate(candidates, start=1)
+        ]
+        response = self._openai_client.responses.parse(
+            model=self._groq_model,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You rank beer candidates for a user query. "
+                        "Select only from the provided candidates. "
+                        "Prefer candidates that best match the user's vibe and constraints. "
+                        "Return selected_ids ordered best to worst."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "query": query_text,
+                            "candidates": candidate_payload,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            text_format=_LLMBeerRerankResult,
+        )
+        parsed = response.output_parsed
+        if parsed is None:
+            return []
+        return parsed.selected_ids
 
     async def fetch_ranked_entries(self) -> list[BeerEntry]:
         if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
