@@ -149,7 +149,7 @@ def test_top_beer_command_uses_fallback_when_message_is_unavailable(monkeypatch)
     asyncio.run(bot_module.cmd_top_beer(message))
 
     assert message.answers == [
-        ("Пока не получилось собрать подборку пива. Попробуй чуть позже.", None)
+        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None)
     ]
 
 
@@ -170,7 +170,7 @@ def test_top_beer_command_uses_fallback_when_builder_raises(monkeypatch):
     asyncio.run(bot_module.cmd_top_beer(message))
 
     assert message.answers == [
-        ("Пока не получилось собрать подборку пива. Попробуй чуть позже.", None)
+        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None)
     ]
 
 
@@ -245,3 +245,22 @@ def test_search_beer_command_requires_query_text(monkeypatch):
             None,
         )
     ]
+
+
+def test_refresh_beer_cache_command_reports_saved_count(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private", "/refresh_beer_cache")
+
+    async def fake_refresh_beer_cache():
+        return 42
+
+    monkeypatch.setattr(
+        bot_module,
+        "refresh_beer_cache",
+        fake_refresh_beer_cache,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_refresh_beer_cache(message))
+
+    assert message.answers == [("Кэш пива обновлен. Сохранено позиций: 42.", None)]
