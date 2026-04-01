@@ -81,3 +81,12 @@ def test_parse_search_query_extracts_negative_category_preferences():
         "IPA",
         "New England IPA",
     }
+
+
+def test_parse_search_query_understands_russian_rating_and_alc_bounds():
+    query = parse_search_query("найди ne ipa с рейтингом выше 3,99 и алкоголем не больше 7 градусов")
+
+    assert "New England IPA" in query.categories
+    assert query.max_alc == 7.0
+    assert query.min_rating == 3.99
+    assert query.tokens == ()
