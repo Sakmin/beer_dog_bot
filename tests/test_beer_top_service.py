@@ -412,6 +412,49 @@ def test_search_message_returns_exact_matches():
     assert "Big Bitter" not in message
 
 
+def test_search_message_handles_russian_threshold_query_without_fallback():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Periferiya",
+            brewery="Big Village Brewery",
+            style="New England IPA",
+            rating=4.06,
+            rating_count=3057,
+            alc="7/-/17",
+            flavor_notes="Citra, Galaxy",
+        ),
+        BeerEntry(
+            name="Cowboy Marlboro",
+            brewery="Plan B",
+            style="IPA",
+            rating=3.94,
+            rating_count=9566,
+            alc="6,5/50/16",
+            flavor_notes="pine, citrus",
+        ),
+    ]
+
+    async def fake_fetch_ranked_entries():
+        return entries
+
+    async def fake_rerank(query_text: str, candidates):
+        return candidates
+
+    service.fetch_ranked_entries = fake_fetch_ranked_entries
+    service.rerank_candidates_with_llm = fake_rerank
+
+    message = asyncio.run(
+        service.search_message("найди ne ipa с рейтингом выше 3,99 и алкоголем не больше 7 градусов")
+    )
+
+    assert message is not None
+    assert "Вот что нашел по запросу" in message
+    assert "Periferiya" in message
+    assert "Cowboy Marlboro" not in message
+
+
 def test_search_message_falls_back_to_closest_matches():
     service = BeerTopService()
 

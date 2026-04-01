@@ -572,7 +572,7 @@ def parse_search_query(text: str) -> BeerSearchQuery:
 
     max_alc: float | None = None
     alc_match = re.search(
-        r"(?:до|не крепче|макс(?:имум)?|maximum|max)\s*(\d+(?:[.,]\d+)?)",
+        r"(?:до|не крепче|не больше|не выше|меньше|ниже|макс(?:имум)?|maximum|max)\s*(\d+(?:[.,]\d+)?)",
         text,
         re.IGNORECASE,
     )
@@ -581,7 +581,7 @@ def parse_search_query(text: str) -> BeerSearchQuery:
 
     min_rating: float | None = None
     rating_match = re.search(
-        r"(?:от|>=?)\s*(4(?:[.,]\d+)?)\s*(?:рейтинга|рейтинг)?",
+        r"(?:от|>=?|выше|больше)\s*(\d(?:[.,]\d+)?)\s*(?:рейтинга|рейтинг)?",
         text,
         re.IGNORECASE,
     )
@@ -595,8 +595,10 @@ def parse_search_query(text: str) -> BeerSearchQuery:
         "weizen", "wheat", "non", "alco", "alcohol", "безал", "безалкогольное",
         "до", "не", "крепче", "максимум", "max", "maximum", "от", "рейтинг",
         "рейтинга", "рейтингом",
+        "выше", "больше", "меньше", "ниже", "найди", "найти", "подбери", "подобрать",
+        "выбери", "выбрать", "покажи",
         "высоким", "высокий", "высокого", "с", "и", "на", "по", "пиво",
-        "градусов", "градуса", "градус", "алкоголя",
+        "градусов", "градуса", "градус", "алкоголя", "алкоголем",
     }
     tokens = tuple(
         token
