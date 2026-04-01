@@ -997,7 +997,12 @@ class BeerTopService:
         scored.sort(key=lambda item: (-item[1], -weighted_score(item[0]), item[0].name))
         return [entry for entry, _ in scored[:5]]
 
-    async def fetch_firestore_inventory(self, app_id: str) -> list[GlideListing]:
+    async def fetch_firestore_inventory(
+        self,
+        app_id: str,
+        *,
+        prioritize_for_enrichment: bool = False,
+    ) -> list[GlideListing]:
         document_json = await self.fetch_published_data_document(app_id)
         table_doc_id = extract_inventory_table_doc_id(document_json)
         if table_doc_id is None:
@@ -1013,7 +1018,9 @@ class BeerTopService:
                     continue
                 seen.add(key)
                 listings.append(listing)
-        return _prioritize_direct_untappd_candidates(listings)
+        if prioritize_for_enrichment:
+            return _prioritize_direct_untappd_candidates(listings)
+        return listings
 
     async def resolve_untappd_matches(self, listings: list[GlideListing]) -> list[BeerEntry]:
         semaphore = asyncio.Semaphore(8)

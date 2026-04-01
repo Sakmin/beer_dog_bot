@@ -357,6 +357,54 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
     assert len(payload["ranked_entries"]) == 1
 
 
+def test_fetch_firestore_inventory_returns_full_listing_set_by_default():
+    service = BeerTopService()
+
+    async def fake_published_data_document(app_id: str) -> str:
+        return """
+        {
+          "fields": {
+            "schema": {
+              "stringValue": "{\\"tables\\":[{\\"name\\":{\\"isSpecial\\":false,\\"name\\":\\"50c867b5-a28d-45b0-9f39-3775b2c42586\\"},\\"columns\\":[{\\"name\\":\\"ПИВОВАРНЯ\\"},{\\"name\\":\\"НАЗВАНИЕ\\"},{\\"name\\":\\"СТИЛЬ\\"},{\\"name\\":\\"ДОСТУПНО В БАРЕ\\"}]}]}"
+            }
+          }
+        }
+        """
+
+    async def fake_table_rows_pages(app_id: str, table_doc_id: str) -> list[str]:
+        return [
+            """
+            {
+              "documents": [
+                {
+                  "fields": {
+                    "НАЗВАНИЕ": {"stringValue": "Alpha"},
+                    "ПИВОВАРНЯ": {"stringValue": "Brew One"},
+                    "СТИЛЬ": {"stringValue": "IPA"},
+                    "ДОСТУПНО В БАРЕ": {"booleanValue": true}
+                  }
+                },
+                {
+                  "fields": {
+                    "НАЗВАНИЕ": {"stringValue": "Beta"},
+                    "ПИВОВАРНЯ": {"stringValue": "Brew Two"},
+                    "СТИЛЬ": {"stringValue": "Sour Ale"},
+                    "ДОСТУПНО В БАРЕ": {"booleanValue": true}
+                  }
+                }
+              ]
+            }
+            """
+        ]
+
+    service.fetch_published_data_document = fake_published_data_document
+    service.fetch_table_rows_pages = fake_table_rows_pages
+
+    listings = asyncio.run(service.fetch_firestore_inventory("app-id"))
+
+    assert [listing.name for listing in listings] == ["Alpha", "Beta"]
+
+
 def test_search_message_returns_exact_matches():
     service = BeerTopService()
 
