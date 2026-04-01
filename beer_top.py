@@ -672,11 +672,11 @@ class BeerTopService:
         self._cache_text: str | None = None
         self._cache_until: datetime | None = None
         self._cache_entries: list[BeerEntry] | None = None
-        self._xai_api_key = os.getenv("XAI_API_KEY")
-        self._xai_model = os.getenv("XAI_MODEL", "grok-4-0709")
+        self._groq_api_key = os.getenv("GROQ_API_KEY")
+        self._groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
         self._openai_client = (
-            OpenAI(api_key=self._xai_api_key, base_url="https://api.x.ai/v1")
-            if OpenAI is not None and self._xai_api_key
+            OpenAI(api_key=self._groq_api_key, base_url="https://api.groq.com/openai/v1")
+            if OpenAI is not None and self._groq_api_key
             else None
         )
 
@@ -767,7 +767,7 @@ class BeerTopService:
             return None
 
         response = self._openai_client.responses.parse(
-            model=self._xai_model,
+            model=self._groq_model,
             input=[
                 {
                     "role": "system",
