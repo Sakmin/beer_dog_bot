@@ -85,11 +85,14 @@ def test_format_beer_message_groups_only_non_empty_categories():
                 )
             ],
             "IPA": [BeerEntry("Beta", "Brewery Two", "IPA - American", 4.01, 200, "6/40/16")],
+            "Около IPA": [
+                BeerEntry("Gamma APA", "Magic Brew", "American Pale Ale", 3.96, 155, "5,8/30/12")
+            ],
             "Pastry Sour Ale": [],
             "Sour Ale": [],
             "Weizen": [BeerEntry("Delta", "Wheat House", "Hefeweizen", 3.97, 89, "5,4/12/13")],
             "Безалкогольное": [
-                BeerEntry("Gamma", None, "Безалкогольное", 3.88, 17, None)
+                BeerEntry("Zero", None, "Безалкогольное", 3.88, 17, None)
             ],
         }
     )
@@ -118,6 +121,12 @@ def test_format_beer_message_groups_only_non_empty_categories():
                 "🥃 6.0% | 🌲 40 IBU | ⭐ 4.01 | 👥 200",
                 "",
                 "",
+                "<b>🪄🪄🪄 Около IPA 🪄🪄🪄</b>",
+                "",
+                "• Gamma APA - Magic Brew",
+                "🥃 5.8% | 🌲 30 IBU | ⭐ 3.96 | 👥 155",
+                "",
+                "",
                 "<b>🇩🇪🇩🇪🇩🇪 Weizen 🇩🇪🇩🇪🇩🇪</b>",
                 "",
                 "• Delta - Wheat House",
@@ -126,7 +135,7 @@ def test_format_beer_message_groups_only_non_empty_categories():
                 "",
                 "<b>🚫🚫🚫 Безалкогольное 🚫🚫🚫</b>",
                 "",
-                "• Gamma",
+                "• Zero",
                 "🥃 - | 🌲 - | ⭐ 3.88 | 👥 17",
             ]
         )
