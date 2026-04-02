@@ -349,7 +349,7 @@ def test_build_message_reads_from_cache_file(tmp_path):
 
     assert message is not None
     assert "Poetry of Love" in message
-    assert "4.3% ABV/ 10 IBU" in message
+    assert "🥃 4.3% | 🌲 10 IBU | ⭐ 4.18 | 👥 1,800" in message
 
 
 def test_refresh_cache_writes_entries_to_disk(tmp_path):
@@ -481,7 +481,7 @@ def test_search_message_returns_exact_matches():
     assert message is not None
     assert "Вот что нашел по запросу" in message
     assert "Poetry of Love" in message
-    assert "6.9% ABV/ 30 IBU" in message
+    assert "🥃 6.9% | 🌲 30 IBU | ⭐ 4.18 | 👥 1,800" in message
     assert "Big Bitter" not in message
 
 
