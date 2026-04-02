@@ -572,19 +572,14 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
         lines.append(f"<b>{escape(label)}</b>")
 
         for beer in beers[:5]:
-            header = f"• <b>{escape(beer.name)}</b>"
+            header = f"• {escape(beer.name)}"
             if beer.flavor_notes:
                 header = f"{header} ({escape(beer.flavor_notes)})"
             brewery = _strip_city_suffix(beer.brewery)
             if brewery:
                 header = f"{header} - {escape(brewery)}"
-            metrics = _format_beer_metrics(beer)
-            if metrics:
-                header = f"{header} {escape(metrics)}"
             lines.append(header)
-            lines.append(
-                f"Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings"
-            )
+            lines.append(_format_beer_stat_line(beer))
             lines.append("")
 
         if lines[-1] == "":
@@ -693,21 +688,15 @@ def format_beer_search_message(query: BeerSearchQuery, beers: list[BeerEntry], *
     lines = [intro]
 
     for beer in beers[:5]:
-        category = categorize_style(beer.style, beer.alc)
-        header = f"• <b>{escape(beer.name)}</b>"
+        header = f"• {escape(beer.name)}"
         if beer.flavor_notes:
             header = f"{header} ({escape(beer.flavor_notes)})"
         brewery = _strip_city_suffix(beer.brewery)
         if brewery:
             header = f"{header} - {escape(brewery)}"
-        metrics = _format_beer_metrics(beer)
-        if metrics:
-            header = f"{header} {escape(metrics)}"
         lines.append("")
         lines.append(header)
-        if category:
-            lines.append(f"Категория: {escape(category)}")
-        lines.append(f"Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings")
+        lines.append(_format_beer_stat_line(beer))
 
     return "\n".join(lines)
 
@@ -1496,7 +1485,7 @@ def _parse_glide_ibu_value(value: str | None) -> int | None:
         return None
 
 
-def _format_beer_metrics(entry: BeerEntry) -> str | None:
+def _format_beer_stat_line(entry: BeerEntry) -> str:
     abv = entry.untappd_abv
     ibu = entry.untappd_ibu
 
@@ -1505,14 +1494,11 @@ def _format_beer_metrics(entry: BeerEntry) -> str | None:
     if ibu is None:
         ibu = _parse_glide_ibu_value(entry.alc)
 
-    parts: list[str] = []
-    if abv is not None:
-        parts.append(f"{abv:.1f}% ABV")
-    if ibu is not None:
-        parts.append(f"{ibu} IBU")
-    if not parts:
-        return None
-    return "/ ".join(parts)
+    abv_text = f"{abv:.1f}%" if abv is not None else "-"
+    ibu_text = f"{ibu} IBU" if ibu is not None else "-"
+    rating_text = f"{entry.rating:.2f}" if entry.rating_available else "-"
+    rating_count_text = f"{entry.rating_count:,}" if entry.rating_available else "-"
+    return f"🥃 {abv_text} | 🌲 {ibu_text} | ⭐ {rating_text} | 👥 {rating_count_text}"
 
 
 def _extract_alc_text(fields: dict[str, object]) -> str | None:
