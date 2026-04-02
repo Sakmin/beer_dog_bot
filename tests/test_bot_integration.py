@@ -15,9 +15,13 @@ class FakeMessage:
         self.chat = SimpleNamespace(id=123, type=chat_type)
         self.text = text
         self.answers: list[tuple[str, str | None]] = []
+        self.documents: list[tuple[bytes, str, str | None]] = []
 
     async def answer(self, text: str, parse_mode: str | None = None) -> None:
         self.answers.append((text, parse_mode))
+
+    async def answer_document(self, document, caption: str | None = None) -> None:
+        self.documents.append((document.data, document.filename, caption))
 
 
 def test_send_survey_posts_beer_message_after_two_polls(monkeypatch):
@@ -264,3 +268,50 @@ def test_refresh_beer_cache_command_reports_saved_count(monkeypatch):
     asyncio.run(bot_module.cmd_refresh_beer_cache(message))
 
     assert message.answers == [("Кэш пива обновлен. Сохранено позиций: 42.", None)]
+
+
+def test_download_menu_command_sends_cached_menu_as_document(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private", "/download_menu")
+
+    def fake_build_menu_download():
+        return (
+            "beer_menu_2026-04-01.txt",
+            "Меню Beer Hounds от 2026-04-01\n\n• Ковбой Мальборо - Plan B",
+        )
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_beer_menu_download",
+        fake_build_menu_download,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_download_menu(message))
+
+    assert message.answers == []
+    assert message.documents == [
+        (
+            "Меню Beer Hounds от 2026-04-01\n\n• Ковбой Мальборо - Plan B".encode("utf-8"),
+            "beer_menu_2026-04-01.txt",
+            None,
+        )
+    ]
+
+
+def test_download_menu_command_uses_fallback_when_cache_missing(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private", "/download_menu")
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_beer_menu_download",
+        lambda: None,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_download_menu(message))
+
+    assert message.answers == [
+        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None)
+    ]
