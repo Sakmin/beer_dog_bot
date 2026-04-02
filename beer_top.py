@@ -624,8 +624,8 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
             lines.append(_format_beer_stat_line(beer))
             lines.append("")
 
-        if lines[-1] == "":
-            lines.pop()
+    if lines and lines[-1] == "":
+        lines.pop()
 
     return "\n".join(lines)
 
