@@ -40,11 +40,6 @@ async def build_beer_top_message() -> str | None:
     return await beer_top_service.build_message()
 
 
-async def build_beer_search_message(query_text: str) -> str | None:
-    """Build a tailored beer search result for a free-form user query."""
-    return await beer_top_service.search_message(query_text)
-
-
 async def refresh_beer_cache() -> int:
     """Refresh the persisted beer inventory cache from live sources."""
     return await beer_top_service.refresh_cache()
@@ -61,27 +56,6 @@ async def send_top_beer_response(message: types.Message):
         text = await build_beer_top_message()
     except Exception as e:
         print(f"Error building beer recommendation for chat {message.chat.id}: {e}")
-        text = None
-
-    if text is None:
-        await message.answer("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.")
-        return
-
-    await message.answer(text, parse_mode="HTML")
-
-
-async def send_search_beer_response(message: types.Message):
-    query_text = (message.text or "").partition(" ")[2].strip()
-    if not query_text:
-        await message.answer(
-            "Напиши запрос после команды. Например: /search_beer ne ipa simcoe до 7 градусов"
-        )
-        return
-
-    try:
-        text = await build_beer_search_message(query_text)
-    except Exception as e:
-        print(f"Error searching beer for chat {message.chat.id}: {e}")
         text = None
 
     if text is None:
@@ -224,12 +198,6 @@ async def cmd_top_beer(message: types.Message):
 async def cmd_top_beer_channel_post(message: types.Message):
     """Handle /top_beer commands sent as channel posts."""
     await send_top_beer_response(message)
-
-
-@dp.message(Command("search_beer"))
-async def cmd_search_beer(message: types.Message):
-    """Search currently available beer by a free-form query."""
-    await send_search_beer_response(message)
 
 
 @dp.message(Command("refresh_beer_cache"))
@@ -388,7 +356,6 @@ async def main():
         BotCommand(command="start", description="Запустить бота"),
         BotCommand(command="poll", description="Запустить опрос вручную"),
         BotCommand(command="top_beer", description="Показать подборку пива"),
-        BotCommand(command="search_beer", description="Подобрать пиво по запросу"),
         BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
         BotCommand(command="download_menu", description="Скачать меню пива в .txt"),
     ])

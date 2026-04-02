@@ -217,40 +217,6 @@ def test_send_survey_keeps_polls_when_beer_message_send_fails(monkeypatch):
     assert bot_module.active_polls[789] == [1, 2]
 
 
-def test_search_beer_command_sends_search_results(monkeypatch):
-    bot_module = load_bot_module(monkeypatch)
-    message = FakeMessage("private", "/search_beer ne ipa simcoe до 7 градусов")
-
-    async def fake_build_search_message(query_text: str):
-        assert query_text == "ne ipa simcoe до 7 градусов"
-        return "Вот что нашел по запросу"
-
-    monkeypatch.setattr(
-        bot_module,
-        "build_beer_search_message",
-        fake_build_search_message,
-        raising=False,
-    )
-
-    asyncio.run(bot_module.cmd_search_beer(message))
-
-    assert message.answers == [("Вот что нашел по запросу", "HTML")]
-
-
-def test_search_beer_command_requires_query_text(monkeypatch):
-    bot_module = load_bot_module(monkeypatch)
-    message = FakeMessage("private", "/search_beer")
-
-    asyncio.run(bot_module.cmd_search_beer(message))
-
-    assert message.answers == [
-        (
-            "Напиши запрос после команды. Например: /search_beer ne ipa simcoe до 7 градусов",
-            None,
-        )
-    ]
-
-
 def test_refresh_beer_cache_command_reports_saved_count(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
     message = FakeMessage("private", "/refresh_beer_cache")
