@@ -6,6 +6,12 @@ def test_categorize_style_separates_neipa_from_regular_ipa():
     assert categorize_style("IPA - American") == "IPA"
 
 
+def test_categorize_style_promotes_low_abv_ipa_to_starter_category():
+    assert categorize_style("Session IPA", "4,7/25/12") == "IPA для старта"
+    assert categorize_style("IPA - New England / Hazy", "4,9/20/12") == "IPA для старта"
+    assert categorize_style("Micro IPA", "5,0/20/12") == "IPA для старта"
+
+
 def test_categorize_style_detects_pastry_sour_before_generic_sour():
     assert categorize_style("Sour - Smoothie / Pastry") == "Pastry Sour Ale"
     assert categorize_style("Sour - Fruited") == "Sour Ale"
@@ -63,6 +69,19 @@ def test_rank_category_entries_prefers_rating_with_real_review_volume():
     assert ranked[0].name == "Crowd Favorite"
 
 
+def test_rank_category_entries_puts_low_abv_ipa_only_in_starter_bucket():
+    beers = [
+        BeerEntry(name="Starter", brewery="A", style="Session IPA", rating=4.0, rating_count=200, alc="4,7/25/12"),
+        BeerEntry(name="Strong NEIPA", brewery="B", style="IPA - New England / Hazy", rating=4.2, rating_count=300, alc="6,5/20/12"),
+    ]
+
+    ranked = rank_category_entries(beers)
+
+    assert [beer.name for beer in ranked["IPA для старта"]] == ["Starter"]
+    assert [beer.name for beer in ranked["New England IPA"]] == ["Strong NEIPA"]
+    assert "IPA" not in ranked
+
+
 def test_parse_search_query_extracts_filters_and_tokens():
     query = parse_search_query("ne ipa simcoe до 7 градусов алкоголя с высоким рейтингом")
 
@@ -89,4 +108,12 @@ def test_parse_search_query_understands_russian_rating_and_alc_bounds():
     assert "New England IPA" in query.categories
     assert query.max_alc == 7.0
     assert query.min_rating == 3.99
+    assert query.tokens == ()
+
+
+def test_parse_search_query_treats_light_beer_prompt_words_as_non_filter_tokens():
+    query = parse_search_query("подскажи легкую IPA до 5,1 градуса алкоголя")
+
+    assert query.categories == ("IPA",)
+    assert query.max_alc == 5.1
     assert query.tokens == ()
