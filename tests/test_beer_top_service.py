@@ -569,6 +569,45 @@ def test_search_message_handles_russian_threshold_query_without_fallback():
     assert "Cowboy Marlboro" not in message
 
 
+def test_search_message_finds_light_ipa_without_falling_back_to_stronger_options():
+    service = BeerTopService()
+
+    entries = [
+        BeerEntry(
+            name="Easy Session",
+            brewery="Small Brewery",
+            style="Session IPA",
+            rating=3.82,
+            rating_count=420,
+            alc="4,7/25/12",
+            flavor_notes="citrus, light body",
+        ),
+        BeerEntry(
+            name="Cowboy Marlboro",
+            brewery="Plan B",
+            style="IPA",
+            rating=3.94,
+            rating_count=9567,
+            alc="6,5/50/16",
+            flavor_notes="pine, citrus",
+        ),
+    ]
+
+    service.load_cached_inventory = lambda: entries
+
+    async def fake_rerank(query_text: str, candidates):
+        return candidates
+
+    service.rerank_candidates_with_llm = fake_rerank
+
+    message = asyncio.run(service.search_message("подскажи легкую IPA до 5,1 градуса алкоголя"))
+
+    assert message is not None
+    assert "Вот что нашел по запросу" in message
+    assert "Easy Session" in message
+    assert "Cowboy Marlboro" not in message
+
+
 def test_search_message_falls_back_to_closest_matches():
     service = BeerTopService()
 

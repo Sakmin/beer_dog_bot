@@ -90,3 +90,11 @@ def test_parse_search_query_understands_russian_rating_and_alc_bounds():
     assert query.max_alc == 7.0
     assert query.min_rating == 3.99
     assert query.tokens == ()
+
+
+def test_parse_search_query_treats_light_beer_prompt_words_as_non_filter_tokens():
+    query = parse_search_query("подскажи легкую IPA до 5,1 градуса алкоголя")
+
+    assert query.categories == ("IPA",)
+    assert query.max_alc == 5.1
+    assert query.tokens == ()

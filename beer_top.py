@@ -682,14 +682,19 @@ def parse_search_query(text: str) -> BeerSearchQuery:
         "до", "не", "крепче", "максимум", "max", "maximum", "от", "рейтинг",
         "рейтинга", "рейтингом",
         "выше", "больше", "меньше", "ниже", "найди", "найти", "подбери", "подобрать",
-        "выбери", "выбрать", "покажи",
+        "выбери", "выбрать", "покажи", "подскажи", "посоветуй",
         "высоким", "высокий", "высокого", "с", "и", "на", "по", "пиво",
         "градусов", "градуса", "градус", "алкоголя", "алкоголем",
     }
     tokens = tuple(
         token
         for token in _normalize_text(text).split()
-        if len(token) > 1 and not re.fullmatch(r"\d+(?:[.,]\d+)?", token) and token not in stop_words
+        if (
+            len(token) > 1
+            and not re.fullmatch(r"\d+(?:[.,]\d+)?", token)
+            and token not in stop_words
+            and not token.startswith("легк")
+        )
     )
 
     return BeerSearchQuery(
