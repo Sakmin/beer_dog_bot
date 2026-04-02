@@ -144,6 +144,12 @@ class BeerSearchQuery:
     tokens: tuple[str, ...] = ()
 
 
+@dataclass(slots=True)
+class GlideMenuMetadata:
+    glide_url: str
+    post_date: str | None = None
+
+
 class _LLMBeerSearchQuery(BaseModel):
     categories: list[str] = Field(default_factory=list)
     exclude_categories: list[str] = Field(default_factory=list)
@@ -241,7 +247,9 @@ class _TelegramGlideURLParser(HTMLParser):
         super().__init__()
         self._wrap_depth = 0
         self._current_wrap_url: str | None = None
-        self._result: str | None = None
+        self._current_wrap_date: str | None = None
+        self._capture_time_for_wrap = False
+        self._result: GlideMenuMetadata | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._result is not None:
@@ -254,10 +262,17 @@ class _TelegramGlideURLParser(HTMLParser):
             if self._wrap_depth == 0 and "tgme_widget_message_wrap" in classes:
                 self._wrap_depth = 1
                 self._current_wrap_url = None
+                self._current_wrap_date = None
+                self._capture_time_for_wrap = False
                 return
             if self._wrap_depth > 0:
                 self._wrap_depth += 1
                 return
+
+        if self._wrap_depth > 0 and tag == "a":
+            classes = attrs_map.get("class", "").split()
+            if "tgme_widget_message_date" in classes:
+                self._capture_time_for_wrap = True
 
         if self._wrap_depth > 0 and tag == "a":
             href = attrs_map.get("href", "")
@@ -265,17 +280,31 @@ class _TelegramGlideURLParser(HTMLParser):
             if match:
                 self._current_wrap_url = match.group(0)
 
+        if self._wrap_depth > 0 and tag == "time" and self._capture_time_for_wrap:
+            datetime_value = attrs_map.get("datetime", "")
+            if datetime_value:
+                try:
+                    self._current_wrap_date = datetime.fromisoformat(datetime_value).date().isoformat()
+                except ValueError:
+                    self._current_wrap_date = datetime_value[:10] or None
+
     def handle_endtag(self, tag: str) -> None:
         if self._result is not None:
             return
 
+        if tag == "a" and self._capture_time_for_wrap:
+            self._capture_time_for_wrap = False
+
         if tag == "div" and self._wrap_depth > 0:
             self._wrap_depth -= 1
             if self._wrap_depth == 0 and self._current_wrap_url is not None:
-                self._result = self._current_wrap_url
+                self._result = GlideMenuMetadata(
+                    glide_url=self._current_wrap_url,
+                    post_date=self._current_wrap_date,
+                )
 
     @property
-    def result(self) -> str | None:
+    def result(self) -> GlideMenuMetadata | None:
         return self._result
 
 
@@ -383,6 +412,13 @@ class _UntappdSearchResultParser(HTMLParser):
 
 
 def extract_latest_glide_url(html: str) -> str | None:
+    metadata = extract_latest_glide_metadata(html)
+    if metadata is None:
+        return None
+    return metadata.glide_url
+
+
+def extract_latest_glide_metadata(html: str) -> GlideMenuMetadata | None:
     parser = _TelegramGlideURLParser()
     parser.feed(html)
     return parser.result
@@ -950,12 +986,45 @@ class BeerTopService:
         return entries
 
     async def refresh_cache(self) -> int:
-        entries, glide_url = await self.fetch_live_entries()
-        self._write_cache(entries, glide_url)
+        entries, glide_url, source_post_date = await self.fetch_live_entries()
+        self._write_cache(entries, glide_url, source_post_date)
         self._cache_entries = entries
         self._cache_text = None
         self._cache_until = datetime.now(UTC) + self._cache_ttl
         return len(entries)
+
+    def build_menu_export(self) -> tuple[str, str] | None:
+        payload = self._load_cache_payload()
+        if payload is None:
+            return None
+
+        inventory = self._deserialize_entries(payload.get("inventory"))
+        if not inventory:
+            return None
+
+        post_date = payload.get("source_post_date")
+        if not isinstance(post_date, str) or not post_date:
+            post_date = "unknown-date"
+
+        lines = [f"Меню Beer Hounds от {post_date}", ""]
+        for beer in inventory:
+            header = f"• {beer.name}"
+            brewery = _strip_city_suffix(beer.brewery)
+            if brewery:
+                header = f"{header} - {brewery}"
+            lines.append(header)
+            if beer.style:
+                lines.append(f"Стиль: {beer.style}")
+            if beer.flavor_notes:
+                lines.append(f"Вкус: {beer.flavor_notes}")
+            lines.append(_format_beer_stat_line(beer))
+            lines.append(f"Untappd: {beer.untappd_url or '-'}")
+            lines.append("")
+
+        if lines[-1] == "":
+            lines.pop()
+
+        return f"beer_menu_{post_date}.txt", "\n".join(lines)
 
     def load_cached_entries(self) -> list[BeerEntry]:
         if self._cache_entries and self._cache_until and datetime.now(UTC) < self._cache_until:
@@ -976,11 +1045,13 @@ class BeerTopService:
         inventory = self._deserialize_entries(payload.get("inventory"))
         return inventory
 
-    async def fetch_live_entries(self) -> tuple[list[BeerEntry], str | None]:
+    async def fetch_live_entries(self) -> tuple[list[BeerEntry], str | None, str | None]:
         channel_html = await self.fetch_channel_html()
-        glide_url = extract_latest_glide_url(channel_html)
+        metadata = extract_latest_glide_metadata(channel_html)
+        glide_url = metadata.glide_url if metadata else None
+        post_date = metadata.post_date if metadata else None
         if not glide_url:
-            return [], None
+            return [], None, None
 
         glide_html = await self.fetch_glide_html(glide_url)
         listings = parse_glide_listings(glide_html)
@@ -989,10 +1060,10 @@ class BeerTopService:
             if app_id:
                 listings = await self.fetch_firestore_inventory(app_id)
         if not listings:
-            return [], glide_url
+            return [], glide_url, post_date
 
         entries = await self.resolve_untappd_matches(listings)
-        return entries, glide_url
+        return entries, glide_url, post_date
 
     def search_entries(self, entries: list[BeerEntry], query: BeerSearchQuery) -> list[BeerEntry]:
         matches: list[BeerEntry] = []
@@ -1235,10 +1306,16 @@ class BeerTopService:
                 continue
         return entries
 
-    def _write_cache(self, entries: list[BeerEntry], glide_url: str | None) -> None:
+    def _write_cache(
+        self,
+        entries: list[BeerEntry],
+        glide_url: str | None,
+        source_post_date: str | None,
+    ) -> None:
         payload = {
             "refreshed_at": datetime.now(UTC).isoformat(),
             "source_glide_url": glide_url,
+            "source_post_date": source_post_date,
             "inventory": [asdict(entry) for entry in entries],
             "ranked_entries": [asdict(entry) for entry in entries if entry.rating_available],
         }

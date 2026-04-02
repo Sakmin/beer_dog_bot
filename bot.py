@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BufferedInputFile
 from beer_top import BeerTopService
 
 # Load environment variables
@@ -48,6 +48,11 @@ async def build_beer_search_message(query_text: str) -> str | None:
 async def refresh_beer_cache() -> int:
     """Refresh the persisted beer inventory cache from live sources."""
     return await beer_top_service.refresh_cache()
+
+
+def build_beer_menu_download() -> tuple[str, str] | None:
+    """Build a text export of the cached beer menu."""
+    return beer_top_service.build_menu_export()
 
 
 async def send_top_beer_response(message: types.Message):
@@ -95,6 +100,18 @@ async def send_refresh_beer_cache_response(message: types.Message):
         return
 
     await message.answer(f"Кэш пива обновлен. Сохранено позиций: {count}.")
+
+
+async def send_download_menu_response(message: types.Message):
+    export = build_beer_menu_download()
+    if export is None:
+        await message.answer("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.")
+        return
+
+    filename, content = export
+    await message.answer_document(
+        BufferedInputFile(content.encode("utf-8"), filename=filename)
+    )
 
 
 async def send_survey(chat_id: int):
@@ -219,6 +236,12 @@ async def cmd_search_beer(message: types.Message):
 async def cmd_refresh_beer_cache(message: types.Message):
     """Refresh local beer inventory cache from live sources."""
     await send_refresh_beer_cache_response(message)
+
+
+@dp.message(Command("download_menu"))
+async def cmd_download_menu(message: types.Message):
+    """Send the current cached beer menu as a .txt document."""
+    await send_download_menu_response(message)
 
 
 @dp.my_chat_member()
@@ -367,6 +390,7 @@ async def main():
         BotCommand(command="top_beer", description="Показать подборку пива"),
         BotCommand(command="search_beer", description="Подобрать пиво по запросу"),
         BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
+        BotCommand(command="download_menu", description="Скачать меню пива в .txt"),
     ])
     
     # Start the test scheduler

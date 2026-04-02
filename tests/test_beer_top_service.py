@@ -380,7 +380,7 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
     ]
 
     async def fake_fetch_live_entries():
-        return entries, "https://go.glideapps.com/play/current"
+        return entries, "https://go.glideapps.com/play/current", "2026-04-02"
 
     service.fetch_live_entries = fake_fetch_live_entries
 
@@ -389,11 +389,54 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
     assert count == 2
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert payload["source_glide_url"] == "https://go.glideapps.com/play/current"
+    assert payload["source_post_date"] == "2026-04-02"
     assert payload["inventory"][0]["name"] == "Poetry of Love"
     assert payload["inventory"][0]["untappd_abv"] is None
     assert payload["inventory"][0]["untappd_ibu"] is None
     assert len(payload["inventory"]) == 2
     assert len(payload["ranked_entries"]) == 1
+
+
+def test_build_menu_export_reads_cached_inventory_and_uses_post_date(tmp_path):
+    cache_path = tmp_path / "beer_inventory_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "refreshed_at": "2026-04-02T12:00:00+00:00",
+                "source_glide_url": "https://go.glideapps.com/play/current",
+                "source_post_date": "2026-04-01",
+                "inventory": [
+                    {
+                        "name": "Ковбой Мальборо",
+                        "brewery": "Plan B",
+                        "style": "IPA",
+                        "rating": 3.94,
+                        "rating_count": 9567,
+                        "alc": "6,5/50/16",
+                        "flavor_notes": None,
+                        "untappd_url": "https://untappd.com/b/plan-b/cowboy/1",
+                        "rating_available": True,
+                        "untappd_abv": 6.5,
+                        "untappd_ibu": 50,
+                    }
+                ],
+                "ranked_entries": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = BeerTopService(cache_path=cache_path)
+
+    export = service.build_menu_export()
+
+    assert export is not None
+    filename, content = export
+    assert filename == "beer_menu_2026-04-01.txt"
+    assert "Меню Beer Hounds от 2026-04-01" in content
+    assert "• Ковбой Мальборо - Plan B" in content
+    assert "🥃 6.5% | 🌲 50 IBU | ⭐ 3.94 | 👥 9,567" in content
+    assert "Untappd: https://untappd.com/b/plan-b/cowboy/1" in content
 
 
 def test_fetch_firestore_inventory_returns_full_listing_set_by_default():
