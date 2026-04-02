@@ -193,12 +193,39 @@ def test_parse_untappd_search_results_handles_nested_wrapper_markup():
 
 
 def test_parse_untappd_beer_page_extracts_rating_and_count():
-    html = (FIXTURES / "untappd_beer_page_sample.html").read_text()
+    html = """
+    <html>
+      <head>
+        <meta
+          name="description"
+          content="Berry Blast Smoothie by Funky Brewery is a Sour - Smoothie / Pastry which has a rating of 4.18 out of 5, with 1,248 ratings and reviews on Untappd."
+        />
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": "Berry Blast Smoothie",
+            "aggregateRating": {
+              "@type": "AggregateRating",
+              "ratingValue": "4.18",
+              "reviewCount": "1248"
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <div>4.3% ABV</div>
+        <div>10 IBU</div>
+      </body>
+    </html>
+    """
 
     details = parse_untappd_beer_page(html)
 
     assert details.rating == 4.18
     assert details.rating_count == 1248
+    assert details.abv == 4.3
+    assert details.ibu == 10
 
 
 def test_parse_untappd_beer_page_falls_back_to_meta_when_json_ld_numbers_are_bad():
@@ -219,6 +246,9 @@ def test_parse_untappd_beer_page_falls_back_to_meta_when_json_ld_numbers_are_bad
           }
         </script>
       </head>
+      <body>
+        <div>6.5% ABV</div>
+      </body>
     </html>
     """
 
@@ -226,6 +256,8 @@ def test_parse_untappd_beer_page_falls_back_to_meta_when_json_ld_numbers_are_bad
 
     assert details.rating == 4.18
     assert details.rating_count == 1248
+    assert details.abv == 6.5
+    assert details.ibu is None
 
 
 def test_select_best_untappd_match_rejects_same_name_wrong_brewery_candidate():
@@ -287,6 +319,8 @@ def test_build_message_reads_from_cache_file(tmp_path):
                         "flavor_notes": "Simcoe, mandarin",
                         "untappd_url": None,
                         "rating_available": True,
+                        "untappd_abv": 4.3,
+                        "untappd_ibu": 10,
                     }
                 ],
                 "ranked_entries": [
@@ -300,6 +334,8 @@ def test_build_message_reads_from_cache_file(tmp_path):
                         "flavor_notes": "Simcoe, mandarin",
                         "untappd_url": None,
                         "rating_available": True,
+                        "untappd_abv": 4.3,
+                        "untappd_ibu": 10,
                     }
                 ],
             },
@@ -313,6 +349,7 @@ def test_build_message_reads_from_cache_file(tmp_path):
 
     assert message is not None
     assert "Poetry of Love" in message
+    assert "4.3% ABV/ 10 IBU" in message
 
 
 def test_refresh_cache_writes_entries_to_disk(tmp_path):
@@ -353,6 +390,8 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert payload["source_glide_url"] == "https://go.glideapps.com/play/current"
     assert payload["inventory"][0]["name"] == "Poetry of Love"
+    assert payload["inventory"][0]["untappd_abv"] is None
+    assert payload["inventory"][0]["untappd_ibu"] is None
     assert len(payload["inventory"]) == 2
     assert len(payload["ranked_entries"]) == 1
 
@@ -442,6 +481,7 @@ def test_search_message_returns_exact_matches():
     assert message is not None
     assert "Вот что нашел по запросу" in message
     assert "Poetry of Love" in message
+    assert "6.9% ABV/ 30 IBU" in message
     assert "Big Bitter" not in message
 
 

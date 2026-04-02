@@ -103,6 +103,8 @@ class BeerEntry:
     flavor_notes: str | None = None
     untappd_url: str | None = None
     rating_available: bool = True
+    untappd_abv: float | None = None
+    untappd_ibu: int | None = None
 
 
 @dataclass(slots=True)
@@ -128,6 +130,8 @@ class UntappdSearchResult:
 class UntappdBeerPage:
     rating: float
     rating_count: int
+    abv: float | None = None
+    ibu: int | None = None
 
 
 @dataclass(slots=True)
@@ -223,6 +227,8 @@ _UNTAPPD_META_RE = re.compile(
     r"rating of\s+([0-9]+(?:\.[0-9]+)?)\s+out of 5,\s+with\s+([\d,]+)\s+ratings",
     re.IGNORECASE,
 )
+_UNTAPPD_ABV_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*ABV", re.IGNORECASE)
+_UNTAPPD_IBU_RE = re.compile(r"([0-9]+)\s*IBU", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
 _DATA_ATTR_RE = re.compile(
     r"<[^>]*data-name=['\"]([^'\"]+)['\"][^>]*data-brewery=['\"]([^'\"]*)['\"][^>]*>",
@@ -507,6 +513,8 @@ def parse_firestore_inventory_rows(rows_json: str) -> list[GlideListing]:
 def parse_untappd_beer_page(html: str) -> UntappdBeerPage:
     rating: float | None = None
     rating_count: int | None = None
+    abv: float | None = None
+    ibu: int | None = None
 
     for raw_json in _UNTAPPD_JSON_LD_RE.findall(html):
         try:
@@ -537,7 +545,15 @@ def parse_untappd_beer_page(html: str) -> UntappdBeerPage:
     if rating is None or rating_count is None:
         raise ValueError("Untappd beer page is missing rating metadata")
 
-    return UntappdBeerPage(rating=rating, rating_count=rating_count)
+    abv_match = _UNTAPPD_ABV_RE.search(html)
+    if abv_match:
+        abv = float(abv_match.group(1))
+
+    ibu_match = _UNTAPPD_IBU_RE.search(html)
+    if ibu_match:
+        ibu = int(ibu_match.group(1))
+
+    return UntappdBeerPage(rating=rating, rating_count=rating_count, abv=abv, ibu=ibu)
 
 
 def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
@@ -562,9 +578,10 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
             brewery = _strip_city_suffix(beer.brewery)
             if brewery:
                 header = f"{header} - {escape(brewery)}"
+            metrics = _format_beer_metrics(beer)
+            if metrics:
+                header = f"{header} {escape(metrics)}"
             lines.append(header)
-            if beer.alc:
-                lines.append(f"ALC: {escape(beer.alc)}")
             lines.append(
                 f"Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings"
             )
@@ -683,12 +700,13 @@ def format_beer_search_message(query: BeerSearchQuery, beers: list[BeerEntry], *
         brewery = _strip_city_suffix(beer.brewery)
         if brewery:
             header = f"{header} - {escape(brewery)}"
+        metrics = _format_beer_metrics(beer)
+        if metrics:
+            header = f"{header} {escape(metrics)}"
         lines.append("")
         lines.append(header)
         if category:
             lines.append(f"Категория: {escape(category)}")
-        if beer.alc:
-            lines.append(f"ALC: {escape(beer.alc)}")
         lines.append(f"Untappd {beer.rating:.2f} | {beer.rating_count:,} ratings")
 
     return "\n".join(lines)
@@ -1082,6 +1100,8 @@ class BeerTopService:
                         flavor_notes=listing.flavor_notes,
                         untappd_url=listing.untappd_url,
                         rating_available=True,
+                        untappd_abv=details.abv,
+                        untappd_ibu=details.ibu,
                     )
 
                 query = listing.name
@@ -1110,6 +1130,8 @@ class BeerTopService:
                     flavor_notes=listing.flavor_notes,
                     untappd_url=listing.untappd_url,
                     rating_available=False,
+                    untappd_abv=None,
+                    untappd_ibu=None,
                 )
 
             return BeerEntry(
@@ -1122,6 +1144,8 @@ class BeerTopService:
                 flavor_notes=listing.flavor_notes,
                 untappd_url=match.url,
                 rating_available=True,
+                untappd_abv=details.abv,
+                untappd_ibu=details.ibu,
             )
 
         results = await asyncio.gather(*(enrich_listing(listing) for listing in listings))
@@ -1206,6 +1230,16 @@ class BeerTopService:
                         flavor_notes=item.get("flavor_notes"),
                         untappd_url=item.get("untappd_url"),
                         rating_available=bool(item.get("rating_available", True)),
+                        untappd_abv=(
+                            float(item["untappd_abv"])
+                            if item.get("untappd_abv") is not None
+                            else None
+                        ),
+                        untappd_ibu=(
+                            int(item["untappd_ibu"])
+                            if item.get("untappd_ibu") is not None
+                            else None
+                        ),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -1445,6 +1479,40 @@ def _parse_alc_value(value: str | None) -> float | None:
         return float(first_chunk)
     except ValueError:
         return None
+
+
+def _parse_glide_ibu_value(value: str | None) -> int | None:
+    if not value:
+        return None
+    parts = value.split("/")
+    if len(parts) < 2:
+        return None
+    candidate = parts[1].strip().replace(",", ".")
+    if not candidate or candidate == "-":
+        return None
+    try:
+        return int(float(candidate))
+    except ValueError:
+        return None
+
+
+def _format_beer_metrics(entry: BeerEntry) -> str | None:
+    abv = entry.untappd_abv
+    ibu = entry.untappd_ibu
+
+    if abv is None:
+        abv = _parse_alc_value(entry.alc)
+    if ibu is None:
+        ibu = _parse_glide_ibu_value(entry.alc)
+
+    parts: list[str] = []
+    if abv is not None:
+        parts.append(f"{abv:.1f}% ABV")
+    if ibu is not None:
+        parts.append(f"{ibu} IBU")
+    if not parts:
+        return None
+    return "/ ".join(parts)
 
 
 def _extract_alc_text(fields: dict[str, object]) -> str | None:
