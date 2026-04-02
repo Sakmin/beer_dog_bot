@@ -31,6 +31,7 @@ CATEGORY_ORDER = (
     "IPA для старта",
     "New England IPA",
     "IPA",
+    "Около IPA",
     "Pastry Sour Ale",
     "Sour Ale",
     "Weizen",
@@ -41,6 +42,7 @@ CATEGORY_EMOJI = {
     "IPA для старта": "😌",
     "New England IPA": "🇺🇸",
     "IPA": "🌲",
+    "Около IPA": "🪄",
     "Pastry Sour Ale": "🥧",
     "Sour Ale": "🍓",
     "Weizen": "🇩🇪",
@@ -189,8 +191,36 @@ def categorize_style(style: str, alc: str | None = None) -> str | None:
     if alc_value is not None and alc_value < 1:
         return "Безалкогольное"
 
-    if "ipa" in normalized and alc_value is not None and alc_value < 5.1:
+    has_ipa_marker = "ipa" in normalized or "india pale" in normalized
+
+    if has_ipa_marker and alc_value is not None and alc_value < 5.1:
         return "IPA для старта"
+
+    is_near_ipa = any(
+        marker in normalized
+        for marker in (
+            "american pale ale",
+            "india pale lager",
+            "cold ipa",
+            "brut ipa",
+            "hoppy pils",
+            "india pale pilsner",
+            "hoppy lager",
+            "dry-hopped lager",
+            "dry hopped lager",
+            "ipl-лайт",
+        )
+    )
+    if (
+        is_near_ipa
+        and alc_value is not None
+        and alc_value < 8.0
+        and (
+            ("cold ipa" not in normalized and "brut ipa" not in normalized)
+            or alc_value >= 5.1
+        )
+    ):
+        return "Около IPA"
 
     is_sour_family = (
         "sour" in normalized

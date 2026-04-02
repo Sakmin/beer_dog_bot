@@ -10,6 +10,19 @@ def test_categorize_style_promotes_low_abv_ipa_to_starter_category():
     assert categorize_style("Session IPA", "4,7/25/12") == "IPA для старта"
     assert categorize_style("IPA - New England / Hazy", "4,9/20/12") == "IPA для старта"
     assert categorize_style("Micro IPA", "5,0/20/12") == "IPA для старта"
+    assert categorize_style("India Pale Lager", "4,9/20/12") == "IPA для старта"
+
+
+def test_categorize_style_groups_ipa_adjacent_styles_into_near_ipa_bucket():
+    assert categorize_style("American Pale Ale", "5,5/30/12") == "Около IPA"
+    assert categorize_style("India Pale Lager", "6,3/25/12") == "Около IPA"
+    assert categorize_style("Cold IPA", "6,0/35/12") == "Около IPA"
+    assert categorize_style("Brut IPA", "6,8/20/12") == "Около IPA"
+    assert categorize_style("Hoppy Pils", "5,3/30/12") == "Около IPA"
+    assert categorize_style("India Pale Pilsner", "5,7/28/12") == "Около IPA"
+    assert categorize_style("Hoppy Lager", "5,2/20/12") == "Около IPA"
+    assert categorize_style("Dry-Hopped Lager", "5,2/20/12") == "Около IPA"
+    assert categorize_style("IPL-лайт", "5,4/20/12") == "Около IPA"
 
 
 def test_categorize_style_detects_pastry_sour_before_generic_sour():
@@ -73,12 +86,14 @@ def test_rank_category_entries_puts_low_abv_ipa_only_in_starter_bucket():
     beers = [
         BeerEntry(name="Starter", brewery="A", style="Session IPA", rating=4.0, rating_count=200, alc="4,7/25/12"),
         BeerEntry(name="Strong NEIPA", brewery="B", style="IPA - New England / Hazy", rating=4.2, rating_count=300, alc="6,5/20/12"),
+        BeerEntry(name="Magic APA", brewery="C", style="American Pale Ale", rating=4.1, rating_count=180, alc="5,8/25/12"),
     ]
 
     ranked = rank_category_entries(beers)
 
     assert [beer.name for beer in ranked["IPA для старта"]] == ["Starter"]
     assert [beer.name for beer in ranked["New England IPA"]] == ["Strong NEIPA"]
+    assert [beer.name for beer in ranked["Около IPA"]] == ["Magic APA"]
     assert "IPA" not in ranked
 
 
