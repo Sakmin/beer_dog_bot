@@ -397,6 +397,86 @@ def test_refresh_cache_writes_entries_to_disk(tmp_path):
     assert len(payload["ranked_entries"]) == 1
 
 
+def test_refresh_cache_preserves_previous_untappd_metrics_for_still_available_beer(tmp_path):
+    cache_path = tmp_path / "beer_inventory_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "refreshed_at": "2026-04-01T12:00:00+00:00",
+                "source_glide_url": "https://go.glideapps.com/play/old",
+                "source_post_date": "2026-04-01",
+                "inventory": [
+                    {
+                        "name": "East Coast Session IPA",
+                        "brewery": "Salden's",
+                        "style": "Session IPA (Galaxy)",
+                        "rating": 3.80,
+                        "rating_count": 521,
+                        "alc": "4,5/-/11,5",
+                        "flavor_notes": "Galaxy",
+                        "untappd_url": "https://untappd.com/b/salden-s-brewery-east-coast-session-ipa/6284259",
+                        "rating_available": True,
+                        "untappd_abv": 4.5,
+                        "untappd_ibu": 35,
+                    },
+                    {
+                        "name": "Removed Beer",
+                        "brewery": "Gone Brewery",
+                        "style": "IPA",
+                        "rating": 4.11,
+                        "rating_count": 900,
+                        "alc": "6,0/30/12",
+                        "flavor_notes": None,
+                        "untappd_url": "https://untappd.com/b/gone/removed/1",
+                        "rating_available": True,
+                        "untappd_abv": 6.0,
+                        "untappd_ibu": 30,
+                    },
+                ],
+                "ranked_entries": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = BeerTopService(cache_path=cache_path)
+
+    entries = [
+        BeerEntry(
+            name="East Coast Session IPA",
+            brewery="Salden's",
+            style="Session IPA (Galaxy)",
+            rating=3.8,
+            rating_count=0,
+            alc="4,5/-/11,5",
+            flavor_notes="Galaxy",
+            untappd_url="https://untappd.com/b/salden-s-brewery-east-coast-session-ipa/6284259",
+            rating_available=False,
+            untappd_abv=None,
+            untappd_ibu=None,
+        )
+    ]
+
+    async def fake_fetch_live_entries():
+        return entries, "https://go.glideapps.com/play/current", "2026-04-02"
+
+    service.fetch_live_entries = fake_fetch_live_entries
+
+    count = asyncio.run(service.refresh_cache())
+
+    assert count == 1
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(payload["inventory"]) == 1
+    saved = payload["inventory"][0]
+    assert saved["name"] == "East Coast Session IPA"
+    assert saved["rating_available"] is True
+    assert saved["rating"] == 3.8
+    assert saved["rating_count"] == 521
+    assert saved["untappd_abv"] == 4.5
+    assert saved["untappd_ibu"] == 35
+    assert all(item["name"] != "Removed Beer" for item in payload["inventory"])
+
+
 def test_build_menu_export_reads_cached_inventory_and_uses_post_date(tmp_path):
     cache_path = tmp_path / "beer_inventory_cache.json"
     cache_path.write_text(
