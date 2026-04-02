@@ -611,6 +611,7 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
         if emoji:
             label = f"{emoji}{emoji}{emoji} {category} {emoji}{emoji}{emoji}"
         lines.append(f"<b>{escape(label)}</b>")
+        lines.append("")
 
         for beer in beers[:5]:
             header = f"• {escape(beer.name)}"
