@@ -1030,6 +1030,7 @@ class BeerTopService:
 
     async def refresh_cache(self) -> int:
         entries, glide_url, source_post_date = await self.fetch_live_entries()
+        entries = self._merge_with_cached_entries(entries)
         self._write_cache(entries, glide_url, source_post_date)
         self._cache_entries = entries
         self._cache_text = None
@@ -1348,6 +1349,54 @@ class BeerTopService:
             except (KeyError, TypeError, ValueError):
                 continue
         return entries
+
+    def _merge_with_cached_entries(self, fresh_entries: list[BeerEntry]) -> list[BeerEntry]:
+        payload = self._load_cache_payload()
+        if payload is None:
+            return fresh_entries
+
+        cached_entries = self._deserialize_entries(payload.get("inventory"))
+        cached_by_key = {
+            (_normalize_text(entry.name), _normalize_text(entry.brewery or "")): entry
+            for entry in cached_entries
+        }
+
+        merged_entries: list[BeerEntry] = []
+        for entry in fresh_entries:
+            key = (_normalize_text(entry.name), _normalize_text(entry.brewery or ""))
+            cached_entry = cached_by_key.get(key)
+            if (
+                cached_entry is not None
+                and not entry.rating_available
+                and cached_entry.rating_available
+            ):
+                merged_entries.append(
+                    BeerEntry(
+                        name=entry.name,
+                        brewery=entry.brewery,
+                        style=entry.style,
+                        rating=cached_entry.rating,
+                        rating_count=cached_entry.rating_count,
+                        alc=entry.alc,
+                        flavor_notes=entry.flavor_notes,
+                        untappd_url=entry.untappd_url,
+                        rating_available=True,
+                        untappd_abv=(
+                            cached_entry.untappd_abv
+                            if cached_entry.untappd_abv is not None
+                            else entry.untappd_abv
+                        ),
+                        untappd_ibu=(
+                            cached_entry.untappd_ibu
+                            if cached_entry.untappd_ibu is not None
+                            else entry.untappd_ibu
+                        ),
+                    )
+                )
+                continue
+            merged_entries.append(entry)
+
+        return merged_entries
 
     def _write_cache(
         self,
