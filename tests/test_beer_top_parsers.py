@@ -68,6 +68,9 @@ def test_extract_latest_glide_metadata_returns_url_and_post_date():
 def test_format_beer_message_groups_only_non_empty_categories():
     message = format_beer_message(
         {
+            "IPA для старта": [
+                BeerEntry("Starter", "Easy Brew", "Session IPA", 3.91, 321, "4,7/25/12")
+            ],
             "New England IPA": [
                 BeerEntry(
                     "Alpha",
@@ -96,6 +99,10 @@ def test_format_beer_message_groups_only_non_empty_categories():
         == "\n".join(
             [
                 "Смотри какое интересное пиво я нашел:",
+                "",
+                "<b>😌😌😌 IPA для старта 😌😌😌</b>",
+                "• Starter - Easy Brew",
+                "🥃 4.7% | 🌲 25 IBU | ⭐ 3.91 | 👥 321",
                 "",
                 "<b>🇺🇸🇺🇸🇺🇸 New England IPA 🇺🇸🇺🇸🇺🇸</b>",
                 "• Alpha (Chinook, Citra, mango) - Brewery",

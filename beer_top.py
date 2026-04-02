@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - optional dependency in local dev
 
 
 CATEGORY_ORDER = (
+    "IPA для старта",
     "New England IPA",
     "IPA",
     "Pastry Sour Ale",
@@ -37,6 +38,7 @@ CATEGORY_ORDER = (
 )
 
 CATEGORY_EMOJI = {
+    "IPA для старта": "😌",
     "New England IPA": "🇺🇸",
     "IPA": "🌲",
     "Pastry Sour Ale": "🥧",
@@ -186,6 +188,9 @@ def categorize_style(style: str, alc: str | None = None) -> str | None:
     alc_value = _parse_alc_value(alc)
     if alc_value is not None and alc_value < 1:
         return "Безалкогольное"
+
+    if "ipa" in normalized and alc_value is not None and alc_value < 5.1:
+        return "IPA для старта"
 
     is_sour_family = (
         "sour" in normalized
@@ -630,6 +635,7 @@ def parse_search_query(text: str) -> BeerSearchQuery:
     exclude_categories: list[str] = []
 
     category_aliases = (
+        ("IPA для старта", ("ipa для старта", "starter ipa", "start ipa")),
         ("New England IPA", ("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa")),
         ("IPA", (" ipa ", "ipa", "american ipa", "west coast ipa")),
         ("Pastry Sour Ale", ("pastry sour", "smoothie sour", "pastry")),
@@ -643,6 +649,7 @@ def parse_search_query(text: str) -> BeerSearchQuery:
             categories.append(category)
 
     negative_aliases = (
+        (("ipa для старта", "starter ipa", "start ipa"), ("IPA для старта",)),
         (("new england ipa", "new england", "ne ipa", "neipa", "hazy ipa"), ("New England IPA",)),
         (("ipa", "american ipa", "west coast ipa"), ("IPA", "New England IPA")),
         (("pastry sour", "smoothie sour", "pastry"), ("Pastry Sour Ale",)),
@@ -1640,9 +1647,13 @@ def _entry_search_blob(entry: BeerEntry) -> str:
 
 def _entry_matches_query(entry: BeerEntry, query: BeerSearchQuery) -> bool:
     category = categorize_style(entry.style, entry.alc)
-    if query.categories and category not in query.categories:
+    if query.categories and not _category_matches_query(category, entry.style, query.categories):
         return False
-    if query.exclude_categories and category in query.exclude_categories:
+    if query.exclude_categories and _category_matches_query(
+        category,
+        entry.style,
+        query.exclude_categories,
+    ):
         return False
 
     alc_value = _parse_alc_value(entry.alc)
@@ -1662,8 +1673,16 @@ def _entry_search_score(entry: BeerEntry, query: BeerSearchQuery, *, exact: bool
     category = categorize_style(entry.style, entry.alc)
 
     if query.categories:
-        score += 3.0 if category in query.categories else (-1.0 if exact else 0.0)
-    if query.exclude_categories and category in query.exclude_categories:
+        score += (
+            3.0
+            if _category_matches_query(category, entry.style, query.categories)
+            else (-1.0 if exact else 0.0)
+        )
+    if query.exclude_categories and _category_matches_query(
+        category,
+        entry.style,
+        query.exclude_categories,
+    ):
         score += -4.0 if exact else -2.5
     if query.min_rating is not None:
         score += 2.0 if entry.rating >= query.min_rating else (-1.5 if exact else -0.25)
@@ -1734,6 +1753,26 @@ def _prioritize_direct_untappd_candidates(
         prioritized.append(listing)
 
     return prioritized
+
+
+def _category_matches_query(
+    entry_category: str | None,
+    entry_style: str,
+    requested_categories: tuple[str, ...],
+) -> bool:
+    if entry_category in requested_categories:
+        return True
+    if entry_category != "IPA для старта":
+        return False
+
+    normalized_style = entry_style.lower()
+    if "IPA" in requested_categories and "ipa" in normalized_style:
+        return True
+    if "New England IPA" in requested_categories and any(
+        marker in normalized_style for marker in ("new england", "hazy", "neipa")
+    ):
+        return True
+    return False
 
 
 def _strip_city_suffix(brewery: str | None) -> str | None:
