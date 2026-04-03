@@ -189,6 +189,10 @@ async def send_top_beer_response(message: types.Message):
 
 
 async def send_refresh_beer_cache_response(message: types.Message):
+    if message.chat.type != "private":
+        await message.answer("Эта команда доступна только в личке с ботом.")
+        return
+
     try:
         count = await refresh_beer_cache()
     except Exception as e:
@@ -268,6 +272,14 @@ async def send_survey(chat_id: int):
             await bot.send_message(chat_id=chat_id, text=beer_message, parse_mode="HTML")
     except Exception as e:
         print(f"Error sending beer recommendations to chat {chat_id}: {e}")
+
+
+def next_cache_refresh_time(now: datetime) -> datetime:
+    target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    days_until_wednesday = (2 - now.weekday()) % 7
+    if days_until_wednesday == 0 and now >= target:
+        days_until_wednesday = 7
+    return target + timedelta(days=days_until_wednesday)
 
 
 @dp.poll_answer()
@@ -476,6 +488,22 @@ async def check_voters_and_remind():
                             print(f"Can't send reminder to user {user_id}: {e}")
 
 
+async def cache_refresh_scheduler():
+    """Refresh beer cache every Wednesday at 08:00 GMT+3 silently."""
+    while True:
+        now = datetime.now(MOSCOW_TZ)
+        refresh_time = next_cache_refresh_time(now)
+        sleep_time = (refresh_time - now).total_seconds()
+        print(f"Next cache refresh at {refresh_time.strftime('%Y-%m-%d %H:%M:%S')} MSK")
+        await asyncio.sleep(sleep_time)
+
+        try:
+            count = await refresh_beer_cache()
+            print(f"Beer cache auto-refresh completed. Saved entries: {count}")
+        except Exception as e:
+            print(f"Beer cache auto-refresh failed: {e}")
+
+
 async def test_scheduler():
     """Schedule test survey - runs 5 seconds after start for testing"""
     now = datetime.now(MOSCOW_TZ)
@@ -540,11 +568,15 @@ async def main():
     
     # Start the reminder checker
     reminder_task = asyncio.create_task(check_voters_and_remind())
+
+    # Start cache refresh scheduler
+    cache_refresh_task = asyncio.create_task(cache_refresh_scheduler())
     
     print("Bot is running...")
     print("Test survey scheduled for 17:02 MSK today")
     print("Weekly surveys will be sent every Wednesday at 13:00 Moscow time")
     print("Voter reminders will be sent every Wednesday at 19:00 Moscow time")
+    print("Beer cache will refresh every Wednesday at 08:00 Moscow time")
     
     try:
         await dp.start_polling(bot)
@@ -552,6 +584,7 @@ async def main():
         test_task.cancel()
         weekly_task.cancel()
         reminder_task.cancel()
+        cache_refresh_task.cancel()
 
 
 if __name__ == "__main__":

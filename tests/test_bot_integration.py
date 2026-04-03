@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import sys
+from datetime import datetime
 from types import SimpleNamespace
 
 
@@ -264,6 +265,15 @@ def test_refresh_beer_cache_command_reports_saved_count(monkeypatch):
     assert message.answers == [("Кэш пива обновлен. Сохранено позиций: 42.", None, None)]
 
 
+def test_refresh_beer_cache_command_is_private_only(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("group", "/refresh_beer_cache")
+
+    asyncio.run(bot_module.cmd_refresh_beer_cache(message))
+
+    assert message.answers == [("Эта команда доступна только в личке с ботом.", None, None)]
+
+
 def test_download_menu_command_sends_cached_menu_as_document(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
     message = FakeMessage("private", "/download_menu")
@@ -325,6 +335,28 @@ def test_hop_guide_command_sends_full_hop_cheatsheet(monkeypatch):
     assert "Apollo" in text
     assert parse_mode is None
     assert reply_markup is None
+
+
+def test_next_cache_refresh_time_returns_next_wednesday_8am_msk(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+
+    monday = datetime(2026, 4, 6, 10, 30, tzinfo=bot_module.MOSCOW_TZ)
+    next_run = bot_module.next_cache_refresh_time(monday)
+
+    assert next_run.weekday() == 2
+    assert next_run.hour == 8
+    assert next_run.minute == 0
+
+
+def test_next_cache_refresh_time_rolls_to_next_week_after_wednesday_run_time(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+
+    late_wednesday = datetime(2026, 4, 8, 9, 0, tzinfo=bot_module.MOSCOW_TZ)
+    next_run = bot_module.next_cache_refresh_time(late_wednesday)
+
+    assert next_run.date().isoformat() == "2026-04-15"
+    assert next_run.hour == 8
+    assert next_run.minute == 0
 
 
 def test_more_top_command_sends_available_categories_keyboard(monkeypatch):
