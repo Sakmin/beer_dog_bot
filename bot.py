@@ -40,6 +40,113 @@ bot_users = set()
 
 beer_top_service = BeerTopService()
 
+HOP_GUIDE_TEXT = """Как читать это быстро
+- Simcoe / Chinook / Columbus / Centennial -> жди хвою, смолу, грейпфрут, сухость
+- Citra / Mosaic / Galaxy / Azacca -> жди сок, тропики, мягкость, hazy-профиль
+- Nelson / Motueka / Riwaka / Nectaron -> жди новозеландский стиль: лайм, passion fruit, виноград, крыжовник
+- Sabro -> почти всегда ищи кокос и лайм
+- Cascade / Amarillo -> более классический американский цитрус, без такой “смузи-сочности”, как у hazy-хмелей
+
+Simcoe
+Профиль: хвоя, смола, грейпфрут
+Похоже: лесной, плотный, west coast
+Где встречается: West Coast IPA, American IPA, DIPA
+
+Citra
+Профиль: лайм, манго, маракуйя
+Похоже: сочный, яркий, тропический
+Где встречается: NEIPA, Hazy IPA, Pale Ale
+
+Mosaic
+Профиль: тропики, ягоды, цитрус
+Похоже: Citra, но сложнее и глубже
+Где встречается: NEIPA, Hazy Pale Ale, IPA
+
+Amarillo
+Профиль: апельсин, мандарин, цветы
+Похоже: мягкий оранжевый цитрус
+Где встречается: APA, IPA, Blonde / Pale
+
+Centennial
+Профиль: грейпфрут, лимон, хвоя
+Похоже: классический американский IPA
+Где встречается: American IPA, West Coast IPA
+
+Cascade
+Профиль: грейпфрут, цветы, трава
+Похоже: олдскульный цитрусовый профиль
+Где встречается: APA, классический IPA
+
+Chinook
+Профиль: сосна, смола, специи
+Похоже: Simcoe, но грубее и суше
+Где встречается: West Coast IPA, Red IPA
+
+Columbus / CTZ
+Профиль: dank, смола, перец
+Похоже: грязновато-смолистый, резкий
+Где встречается: West Coast IPA, DIPA
+
+Galaxy
+Профиль: маракуйя, персик, цитрус
+Похоже: очень сочный южный тропик
+Где встречается: NEIPA, Hazy IPA
+
+Nelson Sauvin
+Профиль: белый виноград, крыжовник
+Похоже: винный, необычный, суховатый
+Где встречается: NZ Pils, IPA, Hazy IPA
+
+Motueka
+Профиль: лайм, цедра, mojito
+Похоже: свежий лаймовый профиль
+Где встречается: NZ Pils, Saison, IPA
+
+Riwaka
+Профиль: маракуйя, грейпфрут, цитрус
+Похоже: очень яркий NZ tropical
+Где встречается: Hazy IPA, NZ IPA
+
+Nectaron
+Профиль: ананас, маракуйя, персик
+Похоже: плотный тропический микс
+Где встречается: Hazy IPA, NEIPA
+
+Sabro
+Профиль: кокос, лайм, древесность
+Похоже: экзотика, легко узнаваемый
+Где встречается: Hazy IPA, Fruited IPA
+
+Idaho 7
+Профиль: абрикос, хвоя, тропики
+Похоже: мост между Simcoe и Mosaic
+Где встречается: IPA, Hazy IPA
+
+Azacca
+Профиль: манго, ананас, цитрус
+Похоже: прямой сочный tropical
+Где встречается: NEIPA, Pale Ale
+
+El Dorado
+Профиль: груша, конфета, тропики
+Похоже: мягкий сладковатый фрукт
+Где встречается: Hazy IPA, Fruited IPA
+
+Vic Secret
+Профиль: ананас, хвоя, маракуйя
+Похоже: Galaxy, но суше
+Где встречается: IPA, Hazy IPA
+
+Warrior
+Профиль: смола, цитрус, горечь
+Похоже: чаще база под другие хмели
+Где встречается: IPA, DIPA
+
+Apollo
+Профиль: резкая смола, цитрус, трава
+Похоже: мощный bittering + aroma
+Где встречается: DIPA, West Coast IPA"""
+
 
 async def build_beer_top_message() -> str | None:
     """Build the beer recommendation message shared by surveys and /top_beer."""
@@ -117,6 +224,10 @@ async def send_more_top_response(message: types.Message):
         ]
     )
     await message.answer("Выбери категорию:", reply_markup=keyboard)
+
+
+async def send_hop_guide_response(message: types.Message):
+    await message.answer(HOP_GUIDE_TEXT)
 
 
 async def send_survey(chat_id: int):
@@ -241,6 +352,12 @@ async def cmd_refresh_beer_cache(message: types.Message):
 async def cmd_download_menu(message: types.Message):
     """Send the current cached beer menu as a .txt document."""
     await send_download_menu_response(message)
+
+
+@dp.message(Command("hop_guide"))
+async def cmd_hop_guide(message: types.Message):
+    """Send a hop flavor cheat sheet."""
+    await send_hop_guide_response(message)
 
 
 @dp.message(Command("more_top"))
@@ -410,6 +527,7 @@ async def main():
         BotCommand(command="poll", description="Запустить опрос вручную"),
         BotCommand(command="top_beer", description="Показать подборку пива"),
         BotCommand(command="more_top", description="Показать больше пива по категориям"),
+        BotCommand(command="hop_guide", description="Шпаргалка по хмелям"),
         BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
         BotCommand(command="download_menu", description="Скачать меню пива в .txt"),
     ])

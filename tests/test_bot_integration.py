@@ -311,6 +311,22 @@ def test_download_menu_command_uses_fallback_when_cache_missing(monkeypatch):
     ]
 
 
+def test_hop_guide_command_sends_full_hop_cheatsheet(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private", "/hop_guide")
+
+    asyncio.run(bot_module.cmd_hop_guide(message))
+
+    assert len(message.answers) == 1
+    text, parse_mode, reply_markup = message.answers[0]
+    assert "Как читать это быстро" in text
+    assert "Simcoe / Chinook / Columbus / Centennial" in text
+    assert "Nelson Sauvin" in text
+    assert "Apollo" in text
+    assert parse_mode is None
+    assert reply_markup is None
+
+
 def test_more_top_command_sends_available_categories_keyboard(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
     message = FakeMessage("private", "/more_top")
