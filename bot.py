@@ -41,108 +41,108 @@ bot_users = set()
 beer_top_service = BeerTopService()
 
 HOP_GUIDE_TEXT = """Как читать это быстро
-- Simcoe / Chinook / Columbus / Centennial -> жди хвою, смолу, грейпфрут, сухость
-- Citra / Mosaic / Galaxy / Azacca -> жди сок, тропики, мягкость, hazy-профиль
-- Nelson / Motueka / Riwaka / Nectaron -> жди новозеландский стиль: лайм, passion fruit, виноград, крыжовник
-- Sabro -> почти всегда ищи кокос и лайм
-- Cascade / Amarillo -> более классический американский цитрус, без такой “смузи-сочности”, как у hazy-хмелей
+- <code>Simcoe</code> / <code>Chinook</code> / <code>Columbus</code> / <code>Centennial</code> -> жди хвою, смолу, грейпфрут, сухость
+- <code>Citra</code> / <code>Mosaic</code> / <code>Galaxy</code> / <code>Azacca</code> -> жди сок, тропики, мягкость, hazy-профиль
+- <code>Nelson</code> / <code>Motueka</code> / <code>Riwaka</code> / <code>Nectaron</code> -> жди новозеландский стиль: лайм, passion fruit, виноград, крыжовник
+- <code>Sabro</code> -> почти всегда ищи кокос и лайм
+- <code>Cascade</code> / <code>Amarillo</code> -> более классический американский цитрус, без такой “смузи-сочности”, как у hazy-хмелей
 
-Simcoe
+<code>Simcoe</code>
 Профиль: хвоя, смола, грейпфрут
 Похоже: лесной, плотный, west coast
 Где встречается: West Coast IPA, American IPA, DIPA
 
-Citra
+<code>Citra</code>
 Профиль: лайм, манго, маракуйя
 Похоже: сочный, яркий, тропический
 Где встречается: NEIPA, Hazy IPA, Pale Ale
 
-Mosaic
+<code>Mosaic</code>
 Профиль: тропики, ягоды, цитрус
 Похоже: Citra, но сложнее и глубже
 Где встречается: NEIPA, Hazy Pale Ale, IPA
 
-Amarillo
+<code>Amarillo</code>
 Профиль: апельсин, мандарин, цветы
 Похоже: мягкий оранжевый цитрус
 Где встречается: APA, IPA, Blonde / Pale
 
-Centennial
+<code>Centennial</code>
 Профиль: грейпфрут, лимон, хвоя
 Похоже: классический американский IPA
 Где встречается: American IPA, West Coast IPA
 
-Cascade
+<code>Cascade</code>
 Профиль: грейпфрут, цветы, трава
 Похоже: олдскульный цитрусовый профиль
 Где встречается: APA, классический IPA
 
-Chinook
+<code>Chinook</code>
 Профиль: сосна, смола, специи
 Похоже: Simcoe, но грубее и суше
 Где встречается: West Coast IPA, Red IPA
 
-Columbus / CTZ
+<code>Columbus / CTZ</code>
 Профиль: dank, смола, перец
 Похоже: грязновато-смолистый, резкий
 Где встречается: West Coast IPA, DIPA
 
-Galaxy
+<code>Galaxy</code>
 Профиль: маракуйя, персик, цитрус
 Похоже: очень сочный южный тропик
 Где встречается: NEIPA, Hazy IPA
 
-Nelson Sauvin
+<code>Nelson Sauvin</code>
 Профиль: белый виноград, крыжовник
 Похоже: винный, необычный, суховатый
 Где встречается: NZ Pils, IPA, Hazy IPA
 
-Motueka
+<code>Motueka</code>
 Профиль: лайм, цедра, mojito
 Похоже: свежий лаймовый профиль
 Где встречается: NZ Pils, Saison, IPA
 
-Riwaka
+<code>Riwaka</code>
 Профиль: маракуйя, грейпфрут, цитрус
 Похоже: очень яркий NZ tropical
 Где встречается: Hazy IPA, NZ IPA
 
-Nectaron
+<code>Nectaron</code>
 Профиль: ананас, маракуйя, персик
 Похоже: плотный тропический микс
 Где встречается: Hazy IPA, NEIPA
 
-Sabro
+<code>Sabro</code>
 Профиль: кокос, лайм, древесность
 Похоже: экзотика, легко узнаваемый
 Где встречается: Hazy IPA, Fruited IPA
 
-Idaho 7
+<code>Idaho 7</code>
 Профиль: абрикос, хвоя, тропики
 Похоже: мост между Simcoe и Mosaic
 Где встречается: IPA, Hazy IPA
 
-Azacca
+<code>Azacca</code>
 Профиль: манго, ананас, цитрус
 Похоже: прямой сочный tropical
 Где встречается: NEIPA, Pale Ale
 
-El Dorado
+<code>El Dorado</code>
 Профиль: груша, конфета, тропики
 Похоже: мягкий сладковатый фрукт
 Где встречается: Hazy IPA, Fruited IPA
 
-Vic Secret
+<code>Vic Secret</code>
 Профиль: ананас, хвоя, маракуйя
 Похоже: Galaxy, но суше
 Где встречается: IPA, Hazy IPA
 
-Warrior
+<code>Warrior</code>
 Профиль: смола, цитрус, горечь
 Похоже: чаще база под другие хмели
 Где встречается: IPA, DIPA
 
-Apollo
+<code>Apollo</code>
 Профиль: резкая смола, цитрус, трава
 Похоже: мощный bittering + aroma
 Где встречается: DIPA, West Coast IPA"""
@@ -231,7 +231,7 @@ async def send_more_top_response(message: types.Message):
 
 
 async def send_hop_guide_response(message: types.Message):
-    await message.answer(HOP_GUIDE_TEXT)
+    await message.answer(HOP_GUIDE_TEXT, parse_mode="HTML")
 
 
 async def send_survey(chat_id: int):

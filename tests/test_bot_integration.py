@@ -330,10 +330,10 @@ def test_hop_guide_command_sends_full_hop_cheatsheet(monkeypatch):
     assert len(message.answers) == 1
     text, parse_mode, reply_markup = message.answers[0]
     assert "Как читать это быстро" in text
-    assert "Simcoe / Chinook / Columbus / Centennial" in text
-    assert "Nelson Sauvin" in text
-    assert "Apollo" in text
-    assert parse_mode is None
+    assert "<code>Simcoe</code>" in text
+    assert "<code>Nelson Sauvin</code>" in text
+    assert "<code>Apollo</code>" in text
+    assert parse_mode == "HTML"
     assert reply_markup is None
 
 
