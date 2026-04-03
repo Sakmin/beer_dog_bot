@@ -49,6 +49,19 @@ CATEGORY_EMOJI = {
     "Безалкогольное": "🚫",
 }
 
+CATEGORY_KEYS = {
+    "IPA для старта": "starter_ipa",
+    "New England IPA": "new_england_ipa",
+    "IPA": "ipa",
+    "Около IPA": "near_ipa",
+    "Pastry Sour Ale": "pastry_sour_ale",
+    "Sour Ale": "sour_ale",
+    "Weizen": "weizen",
+    "Безалкогольное": "non_alcoholic",
+}
+
+CATEGORY_BY_KEY = {value: key for key, value in CATEGORY_KEYS.items()}
+
 FLAVOR_HINT_TOKENS = {
     "клубника",
     "манго",
@@ -660,6 +673,30 @@ def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
     return "\n".join(lines)
 
 
+def format_single_category_message(category: str, beers: list[BeerEntry], *, limit: int = 15) -> str:
+    emoji = CATEGORY_EMOJI.get(category)
+    label = category
+    if emoji:
+        label = f"{emoji}{emoji}{emoji} {category} {emoji}{emoji}{emoji}"
+
+    lines = [f"<b>{escape(label)}</b>", ""]
+
+    for beer in beers[:limit]:
+        header = f"• {escape(beer.name)}"
+        if beer.flavor_notes:
+            header = f"{header} ({escape(beer.flavor_notes)})"
+        brewery = _strip_city_suffix(beer.brewery)
+        if brewery:
+            header = f"{header} - {escape(brewery)}"
+        lines.append(header)
+        lines.append(_format_beer_stat_line(beer))
+        lines.append("")
+
+    if lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines)
+
+
 def parse_search_query(text: str) -> BeerSearchQuery:
     normalized = _normalize_text(text)
     categories: list[str] = []
@@ -857,6 +894,33 @@ class BeerTopService:
         self._cache_text = text
         self._cache_until = datetime.now(UTC) + self._cache_ttl
         return text
+
+    def more_top_categories(self) -> list[tuple[str, str]]:
+        entries = self.load_cached_entries()
+        if not entries:
+            return []
+        grouped = rank_category_entries(entries)
+        return [
+            (category, CATEGORY_KEYS[category])
+            for category in CATEGORY_ORDER
+            if grouped.get(category)
+        ]
+
+    def more_top_category_message(self, category_key: str) -> tuple[str, str] | None:
+        category = CATEGORY_BY_KEY.get(category_key)
+        if category is None:
+            return None
+
+        entries = self.load_cached_entries()
+        if not entries:
+            return None
+
+        grouped = rank_category_entries(entries)
+        beers = grouped.get(category)
+        if not beers:
+            return None
+
+        return category, format_single_category_message(category, beers, limit=15)
 
     async def search_message(self, query_text: str) -> str | None:
         query = await self.parse_user_query(query_text)

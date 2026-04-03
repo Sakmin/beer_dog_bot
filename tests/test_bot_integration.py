@@ -14,14 +14,42 @@ class FakeMessage:
     def __init__(self, chat_type: str, text: str | None = None) -> None:
         self.chat = SimpleNamespace(id=123, type=chat_type)
         self.text = text
-        self.answers: list[tuple[str, str | None]] = []
+        self.answers: list[tuple[str, str | None, object | None]] = []
         self.documents: list[tuple[bytes, str, str | None]] = []
 
-    async def answer(self, text: str, parse_mode: str | None = None) -> None:
-        self.answers.append((text, parse_mode))
+    async def answer(
+        self,
+        text: str,
+        parse_mode: str | None = None,
+        reply_markup: object | None = None,
+    ) -> None:
+        self.answers.append((text, parse_mode, reply_markup))
 
     async def answer_document(self, document, caption: str | None = None) -> None:
         self.documents.append((document.data, document.filename, caption))
+
+
+class FakeCallbackMessage:
+    def __init__(self) -> None:
+        self.answers: list[tuple[str, str | None, object | None]] = []
+
+    async def answer(
+        self,
+        text: str,
+        parse_mode: str | None = None,
+        reply_markup: object | None = None,
+    ) -> None:
+        self.answers.append((text, parse_mode, reply_markup))
+
+
+class FakeCallbackQuery:
+    def __init__(self, data: str) -> None:
+        self.data = data
+        self.message = FakeCallbackMessage()
+        self.answered = False
+
+    async def answer(self) -> None:
+        self.answered = True
 
 
 def test_send_survey_posts_beer_message_after_two_polls(monkeypatch):
@@ -111,7 +139,7 @@ def test_top_beer_command_sends_recommendation_in_supported_chat_types(monkeypat
         asyncio.run(bot_module.cmd_top_beer(message))
 
         assert message.answers == [
-            ("Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha", "HTML")
+            ("Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha", "HTML", None)
         ]
 
 
@@ -132,7 +160,7 @@ def test_top_beer_channel_post_handler_sends_recommendation(monkeypatch):
     asyncio.run(bot_module.cmd_top_beer_channel_post(message))
 
     assert message.answers == [
-        ("Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha", "HTML")
+        ("Смотри какое интересное пиво я нашел:\n\nIPA\nAlpha", "HTML", None)
     ]
 
 
@@ -153,7 +181,7 @@ def test_top_beer_command_uses_fallback_when_message_is_unavailable(monkeypatch)
     asyncio.run(bot_module.cmd_top_beer(message))
 
     assert message.answers == [
-        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None)
+        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None, None)
     ]
 
 
@@ -174,7 +202,7 @@ def test_top_beer_command_uses_fallback_when_builder_raises(monkeypatch):
     asyncio.run(bot_module.cmd_top_beer(message))
 
     assert message.answers == [
-        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None)
+        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None, None)
     ]
 
 
@@ -233,7 +261,7 @@ def test_refresh_beer_cache_command_reports_saved_count(monkeypatch):
 
     asyncio.run(bot_module.cmd_refresh_beer_cache(message))
 
-    assert message.answers == [("Кэш пива обновлен. Сохранено позиций: 42.", None)]
+    assert message.answers == [("Кэш пива обновлен. Сохранено позиций: 42.", None, None)]
 
 
 def test_download_menu_command_sends_cached_menu_as_document(monkeypatch):
@@ -279,5 +307,42 @@ def test_download_menu_command_uses_fallback_when_cache_missing(monkeypatch):
     asyncio.run(bot_module.cmd_download_menu(message))
 
     assert message.answers == [
-        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None)
+        ("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.", None, None)
     ]
+
+
+def test_more_top_command_sends_available_categories_keyboard(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private", "/more_top")
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_more_top_categories",
+        lambda: [("IPA для старта", "starter"), ("IPA", "ipa")],
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_more_top(message))
+
+    assert len(message.answers) == 1
+    text, parse_mode, reply_markup = message.answers[0]
+    assert text == "Выбери категорию:"
+    assert parse_mode is None
+    assert reply_markup is not None
+
+
+def test_more_top_category_callback_sends_extended_category_message(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    callback = FakeCallbackQuery("more_top:ipa")
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_more_top_category_message",
+        lambda category_key: ("IPA", "Категория IPA\n• One\n• Two"),
+        raising=False,
+    )
+
+    asyncio.run(bot_module.handle_more_top_category(callback))
+
+    assert callback.answered is True
+    assert callback.message.answers == [("Категория IPA\n• One\n• Two", "HTML", None)]

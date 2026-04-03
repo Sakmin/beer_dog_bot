@@ -5,8 +5,14 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types
+from aiogram import F
 from aiogram.filters import Command
-from aiogram.types import BotCommand, BufferedInputFile
+from aiogram.types import (
+    BotCommand,
+    BufferedInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from beer_top import BeerTopService
 
 # Load environment variables
@@ -50,6 +56,16 @@ def build_beer_menu_download() -> tuple[str, str] | None:
     return beer_top_service.build_menu_export()
 
 
+def build_more_top_categories() -> list[tuple[str, str]]:
+    """Build available ranked categories for /more_top selection."""
+    return beer_top_service.more_top_categories()
+
+
+def build_more_top_category_message(category_key: str) -> tuple[str, str] | None:
+    """Build extended top message for a selected category."""
+    return beer_top_service.more_top_category_message(category_key)
+
+
 async def send_top_beer_response(message: types.Message):
     """Send the beer recommendation text or a short fallback message."""
     try:
@@ -86,6 +102,21 @@ async def send_download_menu_response(message: types.Message):
     await message.answer_document(
         BufferedInputFile(content.encode("utf-8"), filename=filename)
     )
+
+
+async def send_more_top_response(message: types.Message):
+    categories = build_more_top_categories()
+    if not categories:
+        await message.answer("Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache.")
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"more_top:{key}")]
+            for label, key in categories
+        ]
+    )
+    await message.answer("Выбери категорию:", reply_markup=keyboard)
 
 
 async def send_survey(chat_id: int):
@@ -210,6 +241,28 @@ async def cmd_refresh_beer_cache(message: types.Message):
 async def cmd_download_menu(message: types.Message):
     """Send the current cached beer menu as a .txt document."""
     await send_download_menu_response(message)
+
+
+@dp.message(Command("more_top"))
+async def cmd_more_top(message: types.Message):
+    """Show available beer categories for extended top lists."""
+    await send_more_top_response(message)
+
+
+@dp.callback_query(F.data.startswith("more_top:"))
+async def handle_more_top_category(callback_query: types.CallbackQuery):
+    """Send up to 15 beers for the selected top category."""
+    category_key = (callback_query.data or "").partition(":")[2]
+    result = build_more_top_category_message(category_key)
+    await callback_query.answer()
+    if result is None:
+        await callback_query.message.answer(
+            "Пока нет готового кэша пива. Сначала выполни /refresh_beer_cache."
+        )
+        return
+
+    _, text = result
+    await callback_query.message.answer(text, parse_mode="HTML")
 
 
 @dp.my_chat_member()
@@ -356,6 +409,7 @@ async def main():
         BotCommand(command="start", description="Запустить бота"),
         BotCommand(command="poll", description="Запустить опрос вручную"),
         BotCommand(command="top_beer", description="Показать подборку пива"),
+        BotCommand(command="more_top", description="Показать больше пива по категориям"),
         BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
         BotCommand(command="download_menu", description="Скачать меню пива в .txt"),
     ])
