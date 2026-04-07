@@ -97,6 +97,8 @@ FLAVOR_HINT_TOKENS = {
 LOGGER = logging.getLogger(__name__)
 CHANNEL_URL = "https://t.me/s/beerhounds73"
 UNTAPPD_SEARCH_URL = "https://untappd.com/search?q={query}"
+UNTAPPD_USER_BEERS_URL = "https://untappd.com/user/{username}/beers"
+UNTAPPD_USER_MORE_BEERS_URL = "https://untappd.com/profile/more_beer/{username}/{offset}"
 GLIDE_PUBLISHED_DATA_URL = (
     "https://firestore.googleapis.com/v1/projects/glide-prod/"
     "databases/(default)/documents/glide-apps-v4-data/{app_id}"
@@ -640,6 +642,31 @@ def parse_untappd_beer_page(html: str) -> UntappdBeerPage:
     return UntappdBeerPage(rating=rating, rating_count=rating_count, abv=abv, ibu=ibu)
 
 
+def parse_untappd_user_beers_page(html: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    container_match = re.search(
+        r'<div class="distinct-list-list-container">(.*?)</div>\s*</div>',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    container_html = container_match.group(1) if container_match else html
+    for item_html in re.findall(
+        r'<div class="beer-item"[^>]*>(.*?)(?=<div class="beer-item"|$)',
+        container_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        match = re.search(r'href="(/b/[^"#?]+/\d+)"', item_html)
+        if match is None:
+            continue
+        url = urljoin("https://untappd.com", match.group(1))
+        if url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
 def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
     lines = ["Смотри какое интересное пиво я нашел:"]
 
@@ -894,6 +921,29 @@ class BeerTopService:
         self._cache_text = text
         self._cache_until = datetime.now(UTC) + self._cache_ttl
         return text
+
+    async def build_drink_already_message(self, username: str = "sergey_ulsk") -> str | None:
+        entries = self.load_cached_entries()
+        if not entries:
+            return None
+
+        drunk_urls = await self.fetch_drunk_beer_urls(username)
+        if drunk_urls is None:
+            return None
+
+        filtered_entries = [
+            entry
+            for entry in entries
+            if not entry.untappd_url or entry.untappd_url not in drunk_urls
+        ]
+        if not filtered_entries:
+            return "Похоже, ты уже пил все подходящие позиции из текущего топа."
+
+        grouped = rank_category_entries(filtered_entries)
+        if not grouped:
+            return "Похоже, ты уже пил все подходящие позиции из текущего топа."
+
+        return format_beer_message(grouped)
 
     def more_top_categories(self) -> list[tuple[str, str]]:
         entries = self.load_cached_entries()
@@ -1357,6 +1407,40 @@ class BeerTopService:
 
     async def fetch_untappd_beer_page_html(self, url: str) -> str:
         return await self._fetch_text(url)
+
+    async def fetch_drunk_beer_urls(self, username: str) -> set[str] | None:
+        try:
+            first_page = await self.fetch_untappd_user_beers_html(username)
+            urls = parse_untappd_user_beers_page(first_page)
+            if not urls:
+                return set()
+
+            all_urls = list(urls)
+            offset = len(urls)
+            for _ in range(100):
+                more_page = await self.fetch_untappd_user_more_beers_html(username, offset)
+                more_urls = parse_untappd_user_beers_page(more_page)
+                if not more_urls:
+                    break
+                all_urls.extend(more_urls)
+                offset += len(more_urls)
+            return set(all_urls)
+        except Exception as exc:
+            LOGGER.warning("Failed to fetch Untappd history for %s: %s", username, exc)
+            return None
+
+    async def fetch_untappd_user_beers_html(self, username: str) -> str:
+        return await self._fetch_text(
+            UNTAPPD_USER_BEERS_URL.format(username=quote(username, safe=""))
+        )
+
+    async def fetch_untappd_user_more_beers_html(self, username: str, offset: int) -> str:
+        return await self._fetch_text(
+            UNTAPPD_USER_MORE_BEERS_URL.format(
+                username=quote(username, safe=""),
+                offset=offset,
+            )
+        )
 
     async def _fetch_text(self, url: str) -> str:
         return await asyncio.to_thread(self._fetch_text_sync, url)

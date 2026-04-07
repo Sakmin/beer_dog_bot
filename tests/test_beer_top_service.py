@@ -16,6 +16,7 @@ from beer_top import (
     parse_firestore_inventory_rows,
     parse_glide_listings,
     parse_untappd_beer_page,
+    parse_untappd_user_beers_page,
     parse_untappd_search_results,
     select_best_untappd_match,
 )
@@ -260,6 +261,33 @@ def test_parse_untappd_beer_page_falls_back_to_meta_when_json_ld_numbers_are_bad
     assert details.ibu is None
 
 
+def test_parse_untappd_user_beers_page_reads_only_distinct_beer_items():
+    html = """
+    <html>
+      <body>
+        <div class="distinct-list-list-container">
+          <div class="beer-item" data-bid="6284259">
+            <p class="name"><a href="/b/salden-s-brewery-east-coast-session-ipa/6284259">East Coast Session IPA</a></p>
+          </div>
+          <div class="beer-item" data-bid="6315798">
+            <p class="name"><a href="/b/rewort-brewery-razverni-volnu/6315798">Разверни волну</a></p>
+          </div>
+        </div>
+        <div class="sidebar">
+          <a href="/b/plan-b-brewery-kovboj-malboro/673144">Sidebar beer should be ignored</a>
+        </div>
+      </body>
+    </html>
+    """
+
+    urls = parse_untappd_user_beers_page(html)
+
+    assert urls == [
+        "https://untappd.com/b/salden-s-brewery-east-coast-session-ipa/6284259",
+        "https://untappd.com/b/rewort-brewery-razverni-volnu/6315798",
+    ]
+
+
 def test_select_best_untappd_match_rejects_same_name_wrong_brewery_candidate():
     listing = GlideListing(name="Berry Blast Smoothie", brewery="Funky Brewery")
     results = [
@@ -350,6 +378,75 @@ def test_build_message_reads_from_cache_file(tmp_path):
     assert message is not None
     assert "Poetry of Love" in message
     assert "🥃 4.3% | 🌲 10 IBU | ⭐ 4.18 | 👥 1,800" in message
+
+
+def test_build_drink_already_message_excludes_exact_untappd_urls(tmp_path):
+    cache_path = tmp_path / "beer_inventory_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "refreshed_at": "2026-04-01T12:00:00+00:00",
+                "source_glide_url": "https://go.glideapps.com/play/current",
+                "inventory": [],
+                "ranked_entries": [
+                    {
+                        "name": "Alpha Session IPA",
+                        "brewery": "Hop One",
+                        "style": "Session IPA",
+                        "rating": 4.11,
+                        "rating_count": 1500,
+                        "alc": "4,9/30/12",
+                        "flavor_notes": "Galaxy",
+                        "untappd_url": "https://untappd.com/b/hop-one/alpha-session-ipa/1",
+                        "rating_available": True,
+                        "untappd_abv": 4.9,
+                        "untappd_ibu": 30,
+                    },
+                    {
+                        "name": "Bravo Session IPA",
+                        "brewery": "Hop Two",
+                        "style": "Session IPA",
+                        "rating": 4.02,
+                        "rating_count": 900,
+                        "alc": "4,8/28/12",
+                        "flavor_notes": "Mosaic",
+                        "untappd_url": "https://untappd.com/b/hop-two/bravo-session-ipa/2",
+                        "rating_available": True,
+                        "untappd_abv": 4.8,
+                        "untappd_ibu": 28,
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = BeerTopService(cache_path=cache_path)
+
+    async def fake_fetch_drunk_beer_urls(username: str) -> set[str]:
+        assert username == "sergey_ulsk"
+        return {"https://untappd.com/b/hop-one/alpha-session-ipa/1"}
+
+    service.fetch_drunk_beer_urls = fake_fetch_drunk_beer_urls
+
+    message = asyncio.run(service.build_drink_already_message())
+
+    assert message is not None
+    assert "Bravo Session IPA" in message
+    assert "Alpha Session IPA" not in message
+
+
+def test_build_drink_already_message_returns_none_without_cache(tmp_path):
+    service = BeerTopService(cache_path=tmp_path / "missing.json")
+
+    async def fake_fetch_drunk_beer_urls(username: str) -> set[str]:
+        return set()
+
+    service.fetch_drunk_beer_urls = fake_fetch_drunk_beer_urls
+
+    message = asyncio.run(service.build_drink_already_message())
+
+    assert message is None
 
 
 def test_refresh_cache_writes_entries_to_disk(tmp_path):

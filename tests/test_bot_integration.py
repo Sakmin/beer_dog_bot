@@ -207,6 +207,46 @@ def test_top_beer_command_uses_fallback_when_builder_raises(monkeypatch):
     ]
 
 
+def test_drink_already_command_sends_filtered_recommendations(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private")
+
+    async def fake_build_message():
+        return "IPA для старта\n• Bravo Session IPA"
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_drink_already_message",
+        fake_build_message,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_drink_already(message))
+
+    assert message.answers == [("IPA для старта\n• Bravo Session IPA", "HTML", None)]
+
+
+def test_drink_already_command_uses_fallback_when_message_is_unavailable(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private")
+
+    async def fake_build_message():
+        return None
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_drink_already_message",
+        fake_build_message,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_drink_already(message))
+
+    assert message.answers == [
+        ("Пока нет готового кэша пива или не удалось прочитать выпитые сорта.", None, None)
+    ]
+
+
 def test_send_survey_keeps_polls_when_beer_message_send_fails(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
     calls = []
