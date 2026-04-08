@@ -158,6 +158,11 @@ async def build_drink_already_message() -> str | None:
     return await beer_top_service.build_drink_already_message()
 
 
+async def build_sergey_top_message() -> str | None:
+    """Build Sergey top beers from Untappd personal ratings."""
+    return await beer_top_service.build_sergey_top_message()
+
+
 async def refresh_beer_cache() -> int:
     """Refresh the persisted beer inventory cache from live sources."""
     return await beer_top_service.refresh_cache()
@@ -217,6 +222,20 @@ async def send_drink_already_response(message: types.Message):
 
     if text is None:
         await message.answer("Пока нет готового кэша пива или не удалось прочитать выпитые сорта.")
+        return
+
+    await message.answer(text, parse_mode="HTML")
+
+
+async def send_sergey_top_response(message: types.Message):
+    try:
+        text = await build_sergey_top_message()
+    except Exception as e:
+        print(f"Error building Sergey top for chat {message.chat.id}: {e}")
+        text = None
+
+    if text is None:
+        await message.answer("Пока не получилось собрать твой топ пива из Untappd.")
         return
 
     await message.answer(text, parse_mode="HTML")
@@ -371,6 +390,12 @@ async def cmd_top_beer(message: types.Message):
 async def cmd_drink_already(message: types.Message):
     """Send top beer categories excluding already drunk beers."""
     await send_drink_already_response(message)
+
+
+@dp.message(Command("sergey_top"))
+async def cmd_sergey_top(message: types.Message):
+    """Send Sergey top 15 beers by personal Untappd rating."""
+    await send_sergey_top_response(message)
 
 
 @dp.channel_post(Command("top_beer"))
@@ -580,6 +605,7 @@ async def main():
         BotCommand(command="poll", description="Запустить опрос вручную"),
         BotCommand(command="top_beer", description="Показать подборку пива"),
         BotCommand(command="drink_already", description="Подборка без уже выпитых сортов"),
+        BotCommand(command="sergey_top", description="Мой топ-15 пива"),
         BotCommand(command="more_top", description="Показать больше пива по категориям"),
         BotCommand(command="hop_guide", description="Шпаргалка по хмелям"),
         BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),

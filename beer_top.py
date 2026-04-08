@@ -169,6 +169,19 @@ class GlideMenuMetadata:
     post_date: str | None = None
 
 
+@dataclass(slots=True)
+class SergeyTopEntry:
+    name: str
+    brewery: str | None
+    style: str
+    personal_rating: float
+    global_rating: float | None
+    untappd_url: str
+    untappd_abv: float | None = None
+    untappd_ibu: int | None = None
+    rating_count: int | None = None
+
+
 class _LLMBeerSearchQuery(BaseModel):
     categories: list[str] = Field(default_factory=list)
     exclude_categories: list[str] = Field(default_factory=list)
@@ -667,6 +680,78 @@ def parse_untappd_user_beers_page(html: str) -> list[str]:
     return urls
 
 
+def parse_untappd_user_top_entries_page(html: str) -> list[SergeyTopEntry]:
+    entries: list[SergeyTopEntry] = []
+    container_match = re.search(
+        r'<div class="distinct-list-list-container">(.*)',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    container_html = container_match.group(1) if container_match else html
+    for item_html in re.findall(
+        r'<div class="beer-item"[^>]*>(.*?)(?=<div class="beer-item"|$)',
+        container_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        url_match = re.search(r'href="(/b/[^"#?]+/\d+)"', item_html)
+        name_match = re.search(
+            r'<p class="name">\s*<a[^>]+>(.*?)</a>',
+            item_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        personal_match = re.search(
+            r'Their Rating \((\d+(?:\.\d+)?)\)',
+            item_html,
+            flags=re.IGNORECASE,
+        )
+        if url_match is None or name_match is None or personal_match is None:
+            continue
+
+        brewery_match = re.search(
+            r'<p class="brewery">\s*<a[^>]+>(.*?)</a>',
+            item_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        style_match = re.search(
+            r'<p class="style">(.*?)</p>',
+            item_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        global_match = re.search(
+            r'Global Rating \((\d+(?:\.\d+)?)\)',
+            item_html,
+            flags=re.IGNORECASE,
+        )
+        abv_match = re.search(r'(\d+(?:\.\d+)?)%\s*ABV', item_html, flags=re.IGNORECASE)
+        ibu_match = re.search(r'(\d+)\s*IBU', item_html, flags=re.IGNORECASE)
+
+        entries.append(
+            SergeyTopEntry(
+                name=_clean_text(unescape(name_match.group(1))),
+                brewery=(
+                    _clean_text(unescape(brewery_match.group(1)))
+                    if brewery_match is not None
+                    else None
+                ),
+                style=(
+                    _clean_text(unescape(style_match.group(1)))
+                    if style_match is not None
+                    else ""
+                ),
+                personal_rating=float(personal_match.group(1)),
+                global_rating=(
+                    float(global_match.group(1))
+                    if global_match is not None
+                    else None
+                ),
+                untappd_url=urljoin("https://untappd.com", url_match.group(1)),
+                untappd_abv=float(abv_match.group(1)) if abv_match is not None else None,
+                untappd_ibu=int(ibu_match.group(1)) if ibu_match is not None else None,
+            )
+        )
+    return entries
+
+
 def format_beer_message(grouped: dict[str, list[BeerEntry]]) -> str:
     lines = ["Смотри какое интересное пиво я нашел:"]
 
@@ -721,6 +806,27 @@ def format_single_category_message(category: str, beers: list[BeerEntry], *, lim
 
     if lines and lines[-1] == "":
         lines.pop()
+    return "\n".join(lines)
+
+
+def format_sergey_top_message(entries: list[SergeyTopEntry]) -> str:
+    lines = ["Твой топ-15 пива по оценке:"]
+    for entry in entries:
+        lines.append("")
+        header = f"• {escape(entry.name)}"
+        brewery = _strip_city_suffix(entry.brewery)
+        if brewery:
+            header = f"{header} - {escape(brewery)}"
+        lines.append(header)
+        global_rating_text = f"{entry.global_rating:.2f}" if entry.global_rating is not None else "-"
+        rating_count_text = f"{entry.rating_count:,}" if entry.rating_count is not None else "-"
+        abv_text = f"{entry.untappd_abv:.1f}%" if entry.untappd_abv is not None else "-"
+        ibu_text = f"{entry.untappd_ibu} IBU" if entry.untappd_ibu is not None else "-"
+        lines.append(
+            f"🙋 {entry.personal_rating:.2f} | ⭐ {global_rating_text} | 👥 {rating_count_text}"
+        )
+        lines.append(f"🥃 {abv_text} | 🌲 {ibu_text}")
+
     return "\n".join(lines)
 
 
@@ -944,6 +1050,22 @@ class BeerTopService:
             return "Похоже, ты уже пил все подходящие позиции из текущего топа."
 
         return format_beer_message(grouped)
+
+    async def build_sergey_top_message(self, username: str = "sergey_ulsk") -> str | None:
+        entries = await self.fetch_user_top_entries(username)
+        if not entries:
+            return None
+
+        ranked = sorted(
+            entries,
+            key=lambda entry: (
+                -entry.personal_rating,
+                -(entry.global_rating or 0.0),
+                -(entry.rating_count or 0),
+                entry.name,
+            ),
+        )
+        return format_sergey_top_message(ranked[:15])
 
     def more_top_categories(self) -> list[tuple[str, str]]:
         entries = self.load_cached_entries()
@@ -1427,6 +1549,27 @@ class BeerTopService:
             return set(all_urls)
         except Exception as exc:
             LOGGER.warning("Failed to fetch Untappd history for %s: %s", username, exc)
+            return None
+
+    async def fetch_user_top_entries(self, username: str) -> list[SergeyTopEntry] | None:
+        try:
+            first_page = await self.fetch_untappd_user_beers_html(username)
+            entries = parse_untappd_user_top_entries_page(first_page)
+            if not entries:
+                return []
+
+            all_entries = list(entries)
+            offset = len(entries)
+            for _ in range(100):
+                more_page = await self.fetch_untappd_user_more_beers_html(username, offset)
+                more_entries = parse_untappd_user_top_entries_page(more_page)
+                if not more_entries:
+                    break
+                all_entries.extend(more_entries)
+                offset += len(more_entries)
+            return all_entries
+        except Exception as exc:
+            LOGGER.warning("Failed to fetch Untappd top entries for %s: %s", username, exc)
             return None
 
     async def fetch_untappd_user_beers_html(self, username: str) -> str:

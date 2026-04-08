@@ -8,6 +8,7 @@ from beer_top import (
     BeerEntry,
     BeerSearchQuery,
     GlideListing,
+    SergeyTopEntry,
     UntappdSearchResult,
     extract_glide_app_id,
     extract_inventory_table_doc_id,
@@ -17,6 +18,7 @@ from beer_top import (
     parse_glide_listings,
     parse_untappd_beer_page,
     parse_untappd_user_beers_page,
+    parse_untappd_user_top_entries_page,
     parse_untappd_search_results,
     select_best_untappd_match,
 )
@@ -288,6 +290,76 @@ def test_parse_untappd_user_beers_page_reads_only_distinct_beer_items():
     ]
 
 
+def test_parse_untappd_user_top_entries_page_reads_personal_and_global_ratings():
+    html = """
+    <div class="distinct-list-list-container">
+      <div class="beer-item" data-bid="673144">
+        <div class="beer-details">
+          <p class="name"><a href="/b/plan-b-brewery-kovboj-malboro/673144">Ковбой Мальборо</a></p>
+          <p class="brewery"><a href="/Plan_B_Brewery">Plan B Brewery</a></p>
+          <p class="style">IPA - American</p>
+          <div class="ratings">
+            <div class="you">
+              <p>Their Rating (4)</p>
+            </div>
+            <div class="you">
+              <p>Global Rating (3.94)</p>
+            </div>
+          </div>
+        </div>
+        <div class="details">
+          <p class="abv">6.5% ABV</p>
+          <p class="ibu">50 IBU</p>
+          <p class="check-ins">Total: 1</p>
+        </div>
+      </div>
+      <div class="beer-item" data-bid="6284259">
+        <div class="beer-details">
+          <p class="name"><a href="/b/salden-s-brewery-east-coast-session-ipa/6284259">East Coast Session IPA</a></p>
+          <p class="brewery"><a href="/Saldens">Salden's Brewery</a></p>
+          <p class="style">Session IPA (Galaxy)</p>
+          <div class="ratings">
+            <div class="you">
+              <p>Their Rating (4.5)</p>
+            </div>
+            <div class="you">
+              <p>Global Rating (3.80)</p>
+            </div>
+          </div>
+        </div>
+        <div class="details">
+          <p class="abv">4.5% ABV</p>
+        </div>
+      </div>
+    </div>
+    """
+
+    entries = parse_untappd_user_top_entries_page(html)
+
+    assert entries == [
+        SergeyTopEntry(
+            name="Ковбой Мальборо",
+            brewery="Plan B Brewery",
+            style="IPA - American",
+            personal_rating=4.0,
+            global_rating=3.94,
+            untappd_url="https://untappd.com/b/plan-b-brewery-kovboj-malboro/673144",
+            untappd_abv=6.5,
+            untappd_ibu=50,
+        ),
+        SergeyTopEntry(
+            name="East Coast Session IPA",
+            brewery="Salden's Brewery",
+            style="Session IPA (Galaxy)",
+            personal_rating=4.5,
+            global_rating=3.8,
+            untappd_url="https://untappd.com/b/salden-s-brewery-east-coast-session-ipa/6284259",
+            untappd_abv=4.5,
+            untappd_ibu=None,
+        ),
+    ]
+
+
 def test_select_best_untappd_match_rejects_same_name_wrong_brewery_candidate():
     listing = GlideListing(name="Berry Blast Smoothie", brewery="Funky Brewery")
     results = [
@@ -447,6 +519,55 @@ def test_build_drink_already_message_returns_none_without_cache(tmp_path):
     message = asyncio.run(service.build_drink_already_message())
 
     assert message is None
+
+
+def test_build_sergey_top_message_sorts_by_personal_then_global_rating():
+    service = BeerTopService()
+
+    async def fake_fetch_sergey_top_entries(username: str):
+        assert username == "sergey_ulsk"
+        return [
+            SergeyTopEntry(
+                name="Beer B",
+                brewery="Brew B",
+                style="IPA",
+                personal_rating=4.5,
+                global_rating=3.9,
+                untappd_url="https://untappd.com/b/b/2",
+                untappd_abv=6.0,
+                untappd_ibu=40,
+            ),
+            SergeyTopEntry(
+                name="Beer A",
+                brewery="Brew A",
+                style="Sour Ale",
+                personal_rating=5.0,
+                global_rating=3.5,
+                untappd_url="https://untappd.com/b/a/1",
+                untappd_abv=5.0,
+                untappd_ibu=None,
+            ),
+            SergeyTopEntry(
+                name="Beer C",
+                brewery="Brew C",
+                style="IPA",
+                personal_rating=4.5,
+                global_rating=4.1,
+                untappd_url="https://untappd.com/b/c/3",
+                untappd_abv=None,
+                untappd_ibu=None,
+            ),
+        ]
+
+    service.fetch_user_top_entries = fake_fetch_sergey_top_entries
+
+    message = asyncio.run(service.build_sergey_top_message())
+
+    assert message is not None
+    assert "Beer A" in message
+    assert message.index("Beer A") < message.index("Beer C") < message.index("Beer B")
+    assert "🙋 5.00 | ⭐ 3.50 | 👥 -" in message
+    assert "🙋 4.50 | ⭐ 4.10 | 👥 -" in message
 
 
 def test_refresh_cache_writes_entries_to_disk(tmp_path):

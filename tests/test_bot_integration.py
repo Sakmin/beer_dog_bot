@@ -247,6 +247,48 @@ def test_drink_already_command_uses_fallback_when_message_is_unavailable(monkeyp
     ]
 
 
+def test_sergey_top_command_sends_personal_top(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private")
+
+    async def fake_build_message():
+        return "Мой топ пива\n\n• Beer A - Brew A\n🙋 5.00 | ⭐ 4.12 | 👥 120"
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_sergey_top_message",
+        fake_build_message,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_sergey_top(message))
+
+    assert message.answers == [
+        ("Мой топ пива\n\n• Beer A - Brew A\n🙋 5.00 | ⭐ 4.12 | 👥 120", "HTML", None)
+    ]
+
+
+def test_sergey_top_command_uses_fallback_when_unavailable(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    message = FakeMessage("private")
+
+    async def fake_build_message():
+        return None
+
+    monkeypatch.setattr(
+        bot_module,
+        "build_sergey_top_message",
+        fake_build_message,
+        raising=False,
+    )
+
+    asyncio.run(bot_module.cmd_sergey_top(message))
+
+    assert message.answers == [
+        ("Пока не получилось собрать твой топ пива из Untappd.", None, None)
+    ]
+
+
 def test_send_survey_keeps_polls_when_beer_message_send_fails(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
     calls = []
