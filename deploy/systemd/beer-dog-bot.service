@@ -1,0 +1,17 @@
+[Unit]
+Description=Beer Dog Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/beer_dog_bot
+EnvironmentFile=/root/beer_dog_bot/.env
+ExecStart=/root/beer_dog_bot/venv/bin/python -u /root/beer_dog_bot/bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
