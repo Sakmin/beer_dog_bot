@@ -1190,3 +1190,40 @@ def test_build_message_uses_memory_cache_for_repeated_requests():
 
     assert first == second
     assert calls == {"load": 1}
+
+
+def test_build_message_falls_back_to_inventory_when_ranked_category_is_empty(tmp_path):
+    cache_path = tmp_path / "beer_inventory_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "refreshed_at": "2026-04-03T12:00:00+00:00",
+                "source_glide_url": "https://go.glideapps.com/play/current",
+                "inventory": [
+                    {
+                        "name": "Dog Runner",
+                        "brewery": "Rewort Brewery",
+                        "style": "IPA Session",
+                        "rating": 0.0,
+                        "rating_count": 0,
+                        "alc": "4,0/25/12",
+                        "flavor_notes": None,
+                        "untappd_url": "https://untappd.com/b/rewort-brewery-dog-runner/6531695",
+                        "rating_available": False,
+                        "untappd_abv": 4.0,
+                        "untappd_ibu": 25,
+                    }
+                ],
+                "ranked_entries": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = BeerTopService(cache_path=cache_path)
+
+    message = asyncio.run(service.build_message())
+
+    assert message is not None
+    assert "😌😌😌 IPA для старта 😌😌😌" in message
+    assert "Dog Runner" in message

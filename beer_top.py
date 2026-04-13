@@ -987,6 +987,41 @@ def rank_category_entries(entries: list[BeerEntry]) -> dict[str, list[BeerEntry]
     return ranked
 
 
+def build_category_entries(
+    ranked_entries: list[BeerEntry],
+    inventory_entries: list[BeerEntry] | None = None,
+) -> dict[str, list[BeerEntry]]:
+    grouped = rank_category_entries(ranked_entries)
+    if not inventory_entries:
+        return grouped
+
+    inventory_grouped: dict[str, list[BeerEntry]] = {category: [] for category in CATEGORY_ORDER}
+    for entry in inventory_entries:
+        category = categorize_style(entry.style, entry.alc)
+        if category is None:
+            continue
+        inventory_grouped[category].append(entry)
+
+    for category in CATEGORY_ORDER:
+        if grouped.get(category):
+            continue
+        fallback_entries = inventory_grouped.get(category) or []
+        if not fallback_entries:
+            continue
+        grouped[category] = sorted(
+            fallback_entries,
+            key=lambda entry: (
+                -int(entry.rating_available),
+                -weighted_score(entry) if entry.rating_available else 0.0,
+                -entry.rating_count if entry.rating_available else 0,
+                -entry.rating if entry.rating_available else 0.0,
+                entry.name,
+            ),
+        )
+
+    return grouped
+
+
 class BeerTopService:
     def __init__(
         self,
@@ -1016,10 +1051,11 @@ class BeerTopService:
             return self._cache_text
 
         entries = self.load_cached_entries()
-        if not entries:
+        inventory = self.load_cached_inventory()
+        if not entries and not inventory:
             return None
 
-        grouped = rank_category_entries(entries)
+        grouped = build_category_entries(entries, inventory)
         if not grouped:
             return None
 
@@ -1030,7 +1066,8 @@ class BeerTopService:
 
     async def build_drink_already_message(self, username: str = "sergey_ulsk") -> str | None:
         entries = self.load_cached_entries()
-        if not entries:
+        inventory = self.load_cached_inventory()
+        if not entries and not inventory:
             return None
 
         drunk_urls = await self.fetch_drunk_beer_urls(username)
@@ -1042,10 +1079,15 @@ class BeerTopService:
             for entry in entries
             if not entry.untappd_url or entry.untappd_url not in drunk_urls
         ]
-        if not filtered_entries:
+        filtered_inventory = [
+            entry
+            for entry in inventory
+            if not entry.untappd_url or entry.untappd_url not in drunk_urls
+        ]
+        if not filtered_entries and not filtered_inventory:
             return "Похоже, ты уже пил все подходящие позиции из текущего топа."
 
-        grouped = rank_category_entries(filtered_entries)
+        grouped = build_category_entries(filtered_entries, filtered_inventory)
         if not grouped:
             return "Похоже, ты уже пил все подходящие позиции из текущего топа."
 
@@ -1069,9 +1111,10 @@ class BeerTopService:
 
     def more_top_categories(self) -> list[tuple[str, str]]:
         entries = self.load_cached_entries()
-        if not entries:
+        inventory = self.load_cached_inventory()
+        if not entries and not inventory:
             return []
-        grouped = rank_category_entries(entries)
+        grouped = build_category_entries(entries, inventory)
         return [
             (category, CATEGORY_KEYS[category])
             for category in CATEGORY_ORDER
@@ -1084,10 +1127,11 @@ class BeerTopService:
             return None
 
         entries = self.load_cached_entries()
-        if not entries:
+        inventory = self.load_cached_inventory()
+        if not entries and not inventory:
             return None
 
-        grouped = rank_category_entries(entries)
+        grouped = build_category_entries(entries, inventory)
         beers = grouped.get(category)
         if not beers:
             return None
