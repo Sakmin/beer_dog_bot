@@ -419,6 +419,22 @@ def test_hop_guide_command_sends_full_hop_cheatsheet(monkeypatch):
     assert reply_markup is None
 
 
+def test_configure_bot_commands_ignores_telegram_failures(monkeypatch):
+    bot_module = load_bot_module(monkeypatch)
+    calls = []
+
+    class FakeBot:
+        async def set_my_commands(self, commands):
+            calls.append(commands)
+            raise RuntimeError("telegram timeout")
+
+    monkeypatch.setattr(bot_module, "bot", FakeBot())
+
+    asyncio.run(bot_module.configure_bot_commands())
+
+    assert len(calls) == 1
+
+
 def test_next_cache_refresh_time_returns_next_wednesday_8am_msk(monkeypatch):
     bot_module = load_bot_module(monkeypatch)
 

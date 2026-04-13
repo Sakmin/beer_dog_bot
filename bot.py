@@ -272,6 +272,23 @@ async def send_hop_guide_response(message: types.Message):
     await message.answer(HOP_GUIDE_TEXT, parse_mode="HTML")
 
 
+async def configure_bot_commands():
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Запустить бота"),
+            BotCommand(command="poll", description="Запустить опрос вручную"),
+            BotCommand(command="top_beer", description="Показать подборку пива"),
+            BotCommand(command="drink_already", description="Подборка без уже выпитых сортов"),
+            BotCommand(command="sergey_top", description="Мой топ-15 пива"),
+            BotCommand(command="more_top", description="Показать больше пива по категориям"),
+            BotCommand(command="hop_guide", description="Шпаргалка по хмелям"),
+            BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
+            BotCommand(command="download_menu", description="Скачать меню пива в .txt"),
+        ])
+    except Exception as e:
+        print(f"Failed to configure bot commands: {e}")
+
+
 async def send_survey(chat_id: int):
     """Send the survey polls to the specified chat"""
     try:
@@ -599,18 +616,7 @@ async def weekly_scheduler():
 
 # Main function
 async def main():
-    # Set bot commands
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Запустить бота"),
-        BotCommand(command="poll", description="Запустить опрос вручную"),
-        BotCommand(command="top_beer", description="Показать подборку пива"),
-        BotCommand(command="drink_already", description="Подборка без уже выпитых сортов"),
-        BotCommand(command="sergey_top", description="Мой топ-15 пива"),
-        BotCommand(command="more_top", description="Показать больше пива по категориям"),
-        BotCommand(command="hop_guide", description="Шпаргалка по хмелям"),
-        BotCommand(command="refresh_beer_cache", description="Обновить кэш пива"),
-        BotCommand(command="download_menu", description="Скачать меню пива в .txt"),
-    ])
+    await configure_bot_commands()
     
     # Start the test scheduler
     test_task = asyncio.create_task(test_scheduler())
